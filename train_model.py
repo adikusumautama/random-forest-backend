@@ -7,51 +7,83 @@ import joblib
 import json
 from datetime import datetime
 
-# Ganti dengan path file data Anda
-# Contoh: df = pd.read_csv('D:/Skripsi/Data/damiu_sales_data.csv')
-df = pd.read_csv('data/damiu.csv') # Menggunakan path relatif jika file ada di direktori yang sama
+# --- Load Data ---
+df = pd.read_csv('data/damiu.csv')  # Ganti sesuai lokasi file kamu
 
-# Pastikan kolom tanggal di-parse dengan benar
-df['Tanggal'] = pd.to_datetime(df['Tanggal'], errors='coerce') # Gunakan 'Tanggal' sesuai CSV
-df.dropna(subset=['Tanggal'], inplace=True) # Hapus baris dengan tanggal yang tidak valid
+# --- Parsing & Urutkan Tanggal ---
+df['Tanggal'] = pd.to_datetime(df['Tanggal'], errors='coerce')
+df.dropna(subset=['Tanggal'], inplace=True)
 df = df.sort_values(by='Tanggal')
 
-print(df.head())
-print(df.info())
-
-# --- Feature Engineering ---
+# --- Fitur Waktu Dasar ---
 df['hari_ke'] = (df['Tanggal'] - df['Tanggal'].min()).dt.days
-df['hari_dalam_minggu'] = df['Tanggal'].dt.dayofweek # Senin=0, Minggu=6
+df['hari_dalam_minggu'] = df['Tanggal'].dt.dayofweek
 df['bulan'] = df['Tanggal'].dt.month
-# Tambahkan fitur lain yang relevan jika ada, misal:
-# df['minggu_ke_dalam_tahun'] = df['Tanggal'].dt.isocalendar().week
-# df['tahun'] = df['Tanggal'].dt.year
+df['minggu_ke'] = df['Tanggal'].dt.isocalendar().week
+df['tahun'] = df['Tanggal'].dt.year
+df['is_weekend'] = df['hari_dalam_minggu'].isin([5, 6]).astype(int)
 
-# Target variabel (apa yang ingin diprediksi)
-target_column_name = 'Galon Terjual' # Sesuaikan dengan nama kolom di CSV
+# --- Fitur Awal/Akhir Bulan ---
+df['is_awal_bulan'] = (df['Tanggal'].dt.day <= 3).astype(int)
+df['is_akhir_bulan'] = (df['Tanggal'].dt.day >= 28).astype(int)
 
-# Fitur (variabel input)
-feature_column_names = ['hari_ke', 'hari_dalam_minggu', 'bulan'] # Sesuaikan dengan fitur Anda
+# --- Lag Fitur & Rolling ---
+df['penjualan_kemarin'] = df['Galon Terjual'].shift(1)
+df['penjualan_2hari_lalu'] = df['Galon Terjual'].shift(2)
+
+df['rata2_3hari'] = df['Galon Terjual'].rolling(window=3).mean()
+df['rata2_7hari'] = df['Galon Terjual'].rolling(window=7).mean()
+df['rata2_14hari'] = df['Galon Terjual'].rolling(window=14).mean()
+
+df['std_7hari'] = df['Galon Terjual'].rolling(window=7).std()
+
+df['delta_penjualan'] = df['Galon Terjual'].diff()
+
+# --- Bersihkan NaN akibat rolling & shift ---
+df.dropna(inplace=True)
+
+# --- Fitur & Target ---
+feature_column_names = [
+    'hari_ke',
+    'hari_dalam_minggu',
+    'bulan',
+    'minggu_ke',
+    'tahun',
+    'is_weekend',
+    'is_awal_bulan',
+    'is_akhir_bulan',
+    'penjualan_kemarin',
+    'penjualan_2hari_lalu',
+    'rata2_3hari',
+    'rata2_7hari',
+    'rata2_14hari',
+    'std_7hari',
+    'delta_penjualan'
+]
+
+target_column_name = 'Galon Terjual'
 
 X = df[feature_column_names]
 y = df[target_column_name]
 
-# --- Membagi Data (Train & Test) ---
-# Untuk data time series, split berdasarkan waktu lebih disarankan
+# --- Split Data Train & Test (berdasarkan urutan waktu) ---
 train_size_ratio = 0.8
 train_index_end = int(len(df) * train_size_ratio)
 
 X_train, X_test = X.iloc[:train_index_end], X.iloc[train_index_end:]
 y_train, y_test = y.iloc[:train_index_end], y.iloc[train_index_end:]
 
-print(f"\nUkuran data latih: {X_train.shape}, {y_train.shape}")
-print(f"Ukuran data uji: {X_test.shape}, {y_test.shape}")
-
-# --- Melatih Model Random Forest ---
-rf_model = RandomForestRegressor(n_estimators=100, random_state=42, max_depth=10, min_samples_split=5, min_samples_leaf=2)
+# --- Latih Model ---
+rf_model = RandomForestRegressor(
+    n_estimators=100,
+    random_state=42,
+    max_depth=10,
+    min_samples_split=5,
+    min_samples_leaf=2
+)
 rf_model.fit(X_train, y_train)
 
-# --- Evaluasi Model ---
+# --- Evaluasi ---
 y_pred_test = rf_model.predict(X_test)
 mse = mean_squared_error(y_test, y_pred_test)
 rmse = np.sqrt(mse)
@@ -62,14 +94,19 @@ print(f"Mean Squared Error (MSE): {mse:.2f}")
 print(f"Root Mean Squared Error (RMSE): {rmse:.2f}")
 print(f"R-squared (R2): {r2:.2f}")
 
-# --- Menyimpan Model dan Metadata ---
+# --- Simpan Model & Metadata ---
 joblib.dump(rf_model, 'random_forest_gallon_model.joblib')
+
 model_metadata = {
     'features': feature_column_names,
-    'training_start_date': df['Tanggal'].min().isoformat() # Gunakan 'Tanggal'
+    'training_start_date': df['Tanggal'].min().isoformat(),
+    'training_end_date': df['Tanggal'].max().isoformat(),
+    'model_type': 'RandomForestRegressor',
+    'rmse': rmse,
+    'r2': r2
 }
+
 with open('model_metadata.json', 'w') as f:
     json.dump(model_metadata, f)
 
-print("\nModel berhasil dilatih dan disimpan sebagai 'random_forest_gallon_model.joblib'")
-print("Metadata model disimpan sebagai 'model_metadata.json'")
+print("\nModel dan metadata berhasil disimpan.")

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "752893008003",
+    "project_id": "damiu-app-ad9f7",
+    "storage_bucket": "damiu-app-ad9f7.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:752893008003:android:4f704868fb5b6b9d8de3b6",
+        "android_client_info": {
+          "package_name": "com.aylaqua.damiu"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAgb8WD_0aNEbjrQRtStHdtMxw7fHOFLDc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

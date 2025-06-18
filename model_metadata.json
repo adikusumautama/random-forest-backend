@@ -1,1 +1,1 @@
-{"features": ["hari_ke", "hari_dalam_minggu", "bulan"], "training_start_date": "2022-07-04T00:00:00"}
+{"features": ["hari_ke", "hari_dalam_minggu", "bulan", "minggu_ke", "tahun", "is_weekend", "is_awal_bulan", "is_akhir_bulan", "penjualan_kemarin", "penjualan_2hari_lalu", "rata2_3hari", "rata2_7hari", "rata2_14hari", "std_7hari", "delta_penjualan"], "training_start_date": "2022-07-17T00:00:00", "training_end_date": "2025-06-10T00:00:00", "model_type": "RandomForestRegressor", "rmse": 4.417802259570141, "r2": 0.9660341773023912}
