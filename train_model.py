@@ -375,6 +375,16 @@ print(f"Mean Squared Error (MSE): {mse_xgb_tuned:.2f}")
 print(f"Root Mean Squared Error (RMSE): {rmse_xgb_tuned:.2f}")
 print(f"R-squared (R2): {r2_xgb_tuned:.2f}")
 
+# --- Evaluasi Model Ensemble (Rata-rata) ---
+print("\nEvaluasi Model Ensemble (Rata-rata) pada Data Uji:")
+y_pred_ensemble = (y_pred_rf_tuned + y_pred_xgb_tuned) / 2
+mse_ensemble = mean_squared_error(y_test, y_pred_ensemble)
+rmse_ensemble = np.sqrt(mse_ensemble)
+r2_ensemble = r2_score(y_test, y_pred_ensemble)
+print(f"Mean Squared Error (MSE): {mse_ensemble:.2f}")
+print(f"Root Mean Squared Error (RMSE): {rmse_ensemble:.2f}")
+print(f"R-squared (R2): {r2_ensemble:.2f}")
+
 # --- Simpan Model Terbaik (dari GridSearchCV) dan Metadata ---
 joblib.dump(best_rf_model_tuned, 'random_forest_gallon_model.joblib')
 joblib.dump(best_xgb_model_tuned, 'xgboost_gallon_model.joblib')
@@ -388,6 +398,8 @@ model_metadata = {
     'rf_r2': r2_rf_tuned,
     'xgb_rmse': rmse_xgb_tuned,
     'xgb_r2': r2_xgb_tuned,
+    'ensemble_rmse': rmse_ensemble,
+    'ensemble_r2': r2_ensemble,
     'rf_best_params_randomized': rf_random_search.best_params_,
     'xgb_best_params_randomized': xgb_random_search.best_params_,
     'rf_best_params_grid': rf_grid_search.best_params_,
