@@ -21,6 +21,10 @@ df['Tanggal'] = pd.to_datetime(df['Tanggal'], format='%Y-%m-%d', errors='coerce'
 df.dropna(subset=['Tanggal'], inplace=True)
 df = df.sort_values(by='Tanggal')
 
+# --- Reindex ke Kalender Lengkap (isi tanggal bolong) ---
+all_dates = pd.date_range(start=df['Tanggal'].min(), end=df['Tanggal'].max(), freq='D')
+df = df.set_index('Tanggal').reindex(all_dates).rename_axis('Tanggal').reset_index()
+
 # --- Fitur Hari Libur ---
 indo_holidays = holidays.Indonesia()
 df['is_holiday'] = df['Tanggal'].apply(lambda date: 1 if date in indo_holidays else 0).astype(int)

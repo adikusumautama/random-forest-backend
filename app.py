@@ -14,7 +14,7 @@ app = Flask(__name__)
 
 # --- Firebase Setup ---
 try:
-    cred = credentials.Certificate("firebase/damiu-app-ad9f7-firebase-adminsdk-fbsvc-19f7bfa236.json")
+    cred = credentials.Certificate("firebase/damiu-app-ad9f7-firebase-adminsdk-fbsvc-9be6b99017.json")
     firebase_admin.initialize_app(cred)
     db = firestore.client()
     print("* Terhubung ke Firestore.")
