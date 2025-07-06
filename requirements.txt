@@ -1,0 +1,9 @@
+flask
+gunicorn
+joblib
+pandas
+numpy
+scikit-learn
+xgboost
+firebase-admin
+holidays
