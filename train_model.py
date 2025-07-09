@@ -1,7 +1,7 @@
 import pandas as pd
 from sklearn.model_selection import train_test_split, TimeSeriesSplit, RandomizedSearchCV
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor # Tambahkan GradientBoostingRegressor jika ingin mencoba
-from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 import numpy as np
 import joblib
 import json
@@ -193,7 +193,6 @@ param_dist_xgb = {
     'reg_alpha': [0.5, 1, 2, 5], # Diperluas sedikit di sekitar 2
     'reg_lambda': [0.5, 1, 2, 5] # Diperluas sedikit di sekitar 2
 }
- # Tambahkan GradientBoostingRegressor jika ingin mencoba
 
 # --- Latih Model Random Forest ---
 rf_model = RandomForestRegressor(
@@ -364,29 +363,35 @@ print(f"Best parameters for XGBoost (GridSearchCV): {xgb_grid_search.best_params
 print("\nEvaluasi Model Random Forest (GridSearchCV) pada Data Uji:")
 y_pred_rf_tuned = best_rf_model_tuned.predict(X_test)
 mse_rf_tuned = mean_squared_error(y_test, y_pred_rf_tuned)
+mae_rf_tuned = mean_absolute_error(y_test, y_pred_rf_tuned)
 rmse_rf_tuned = np.sqrt(mse_rf_tuned)
 r2_rf_tuned = r2_score(y_test, y_pred_rf_tuned)
 print(f"Mean Squared Error (MSE): {mse_rf_tuned:.2f}")
 print(f"Root Mean Squared Error (RMSE): {rmse_rf_tuned:.2f}")
+print(f"Mean Absolute Error (MAE): {mae_rf_tuned:.2f}")
 print(f"R-squared (R2): {r2_rf_tuned:.2f}")
 
 print("\nEvaluasi Model XGBoost (GridSearchCV) pada Data Uji:")
 y_pred_xgb_tuned = best_xgb_model_tuned.predict(X_test)
 mse_xgb_tuned = mean_squared_error(y_test, y_pred_xgb_tuned)
+mae_xgb_tuned = mean_absolute_error(y_test, y_pred_xgb_tuned)
 rmse_xgb_tuned = np.sqrt(mse_xgb_tuned)
 r2_xgb_tuned = r2_score(y_test, y_pred_xgb_tuned)
 print(f"Mean Squared Error (MSE): {mse_xgb_tuned:.2f}")
 print(f"Root Mean Squared Error (RMSE): {rmse_xgb_tuned:.2f}")
+print(f"Mean Absolute Error (MAE): {mae_xgb_tuned:.2f}")
 print(f"R-squared (R2): {r2_xgb_tuned:.2f}")
 
 # --- Evaluasi Model Ensemble (Rata-rata) ---
 print("\nEvaluasi Model Ensemble (Rata-rata) pada Data Uji:")
 y_pred_ensemble = (y_pred_rf_tuned + y_pred_xgb_tuned) / 2
 mse_ensemble = mean_squared_error(y_test, y_pred_ensemble)
+mae_ensemble = mean_absolute_error(y_test, y_pred_ensemble)
 rmse_ensemble = np.sqrt(mse_ensemble)
 r2_ensemble = r2_score(y_test, y_pred_ensemble)
 print(f"Mean Squared Error (MSE): {mse_ensemble:.2f}")
 print(f"Root Mean Squared Error (RMSE): {rmse_ensemble:.2f}")
+print(f"Mean Absolute Error (MAE): {mae_ensemble:.2f}")
 print(f"R-squared (R2): {r2_ensemble:.2f}")
 
 # --- Simpan Model Terbaik (dari GridSearchCV) dan Metadata ---
@@ -399,10 +404,13 @@ model_metadata = {
     'training_end_date': df['Tanggal'].max().isoformat(),
     'model_types': ['RandomForestRegressor', 'XGBRegressor'], # type: ignore
     'rf_rmse': rmse_rf_tuned,
+    'rf_mae': mae_rf_tuned,
     'rf_r2': r2_rf_tuned,
     'xgb_rmse': rmse_xgb_tuned,
+    'xgb_mae': mae_xgb_tuned,
     'xgb_r2': r2_xgb_tuned,
     'ensemble_rmse': rmse_ensemble,
+    'ensemble_mae': mae_ensemble,
     'ensemble_r2': r2_ensemble,
     'rf_best_params_randomized': rf_random_search.best_params_,
     'xgb_best_params_randomized': xgb_random_search.best_params_,
