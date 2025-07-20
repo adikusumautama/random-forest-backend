@@ -1,12 +1,12 @@
 import pandas as pd
 from sklearn.model_selection import train_test_split, TimeSeriesSplit, RandomizedSearchCV
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor # Tambahkan GradientBoostingRegressor jika ingin mencoba
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 import numpy as np
 import joblib
 import json
 from xgboost import XGBRegressor
-import holidays # Tambahkan import holidays
+import holidays
 from datetime import datetime
 
 # --- Load Data ---
@@ -156,19 +156,7 @@ train_index_end = int(len(df) * train_size_ratio)
 X_train, X_test = X.iloc[:train_index_end], X.iloc[train_index_end:]
 y_train, y_test = y.iloc[:train_index_end], y.iloc[train_index_end:]
 
-# --- Inverse Transformasi untuk Evaluasi (jika menggunakan transformasi log) ---
-# def inverse_transform(y_transformed):
-#     return np.expm1(y_transformed)
 
-# --- Konfigurasi TimeSeriesSplit ---
-# n_splits: Jumlah split. Menentukan berapa banyak "fold" yang akan dibuat.
-#           Dengan n_splits=5, akan ada 5 iterasi:
-#           Fold 1: Train [0..~0.2), Test [~0.2..~0.4)
-#           Fold 2: Train [0..~0.4), Test [~0.4..~0.6)
-#           ...
-#           Fold 5: Train [0..~0.8), Test [~0.8..1.0) (Ini akan menggunakan seluruh X_train)
-# max_train_size: Batas ukuran maksimum untuk setiap fold training set (opsional)
-# gap: Jumlah sampel yang akan dikecualikan antara train dan test set (opsional)
 tscv = TimeSeriesSplit(n_splits=5) # Sesuaikan n_splits sesuai kebutuhan dan ukuran data
 
 # --- Hyperparameter Tuning dengan RandomizedSearchCV ---
@@ -425,7 +413,7 @@ print("\nModel dan metadata berhasil disimpan.")
 
 
 #  ---- SHAP Analysis ----
-import matplotlib.pyplot as plt # Import matplotlib
+import matplotlib.pyplot as plt
 try:
     import shap
     print("\nMelakukan SHAP analysis...")
