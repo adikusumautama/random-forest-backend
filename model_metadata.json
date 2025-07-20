@@ -1,1 +1,56 @@
-{"features": ["hari_ke", "hari_dalam_minggu", "bulan", "minggu_ke", "tahun", "is_weekend", "is_awal_bulan", "is_akhir_bulan", "is_holiday", "hari_minggu_x_holiday", "penjualan_kemarin", "penjualan_2hari_lalu", "rata2_3hari", "rata2_7hari", "rata2_14hari", "std_7hari", "delta_penjualan", "sin_tahun_1", "cos_tahun_1", "sin_tahun_2", "cos_tahun_2", "sin_minggu_1", "cos_minggu_1", "is_zero_sale_day", "days_since_last_zero_sale", "is_day_after_zero_sale"], "training_start_date": "2022-07-04T00:00:00", "training_end_date": "2025-06-10T00:00:00", "model_types": ["RandomForestRegressor", "XGBRegressor"], "rf_rmse": 4.226103372679113, "rf_mae": 2.6360058139534885, "rf_r2": 0.9699774607847107, "xgb_rmse": 4.175673223798558, "xgb_mae": 2.8056416511535645, "xgb_r2": 0.9706897139549255, "ensemble_rmse": 3.6492189202991305, "ensemble_mae": 2.384601682579101, "ensemble_r2": 0.9776144883727946, "rf_best_params_randomized": {"n_estimators": 800, "min_samples_split": 2, "min_samples_leaf": 1, "max_depth": null, "bootstrap": true}, "xgb_best_params_randomized": {"subsample": 0.6, "reg_lambda": 5, "reg_alpha": 5, "n_estimators": 800, "max_depth": 3, "learning_rate": 0.1, "gamma": 0.4, "colsample_bytree": 0.9}, "rf_best_params_grid": {"bootstrap": true, "max_depth": null, "min_samples_leaf": 1, "min_samples_split": 2, "n_estimators": 800}, "xgb_best_params_grid": {"colsample_bytree": 0.9, "gamma": 0.4, "learning_rate": 0.1, "max_depth": 2, "n_estimators": 825, "reg_alpha": 5, "reg_lambda": 5, "subsample": 0.6}}
+{
+    "features": [
+        "hari_ke",
+        "hari_dalam_minggu",
+        "bulan",
+        "minggu_ke",
+        "tahun",
+        "is_weekend",
+        "is_awal_bulan",
+        "is_akhir_bulan",
+        "is_holiday",
+        "hari_minggu_x_holiday",
+        "penjualan_kemarin",
+        "penjualan_2hari_lalu",
+        "rata2_3hari",
+        "rata2_7hari",
+        "rata2_14hari",
+        "std_7hari",
+        "delta_penjualan",
+        "sin_tahun_1",
+        "cos_tahun_1",
+        "sin_tahun_2",
+        "cos_tahun_2",
+        "sin_minggu_1",
+        "cos_minggu_1",
+        "is_zero_sale_day",
+        "days_since_last_zero_sale",
+        "is_day_after_zero_sale"
+    ],
+    "training_start_date": "2022-07-04T00:00:00",
+    "training_end_date": "2025-06-10T00:00:00",
+    "model_type": "XGBRegressor",
+    "xgb_rmse": 4.175673223798558,
+    "xgb_mae": 2.8056416511535645,
+    "xgb_r2": 0.9706897139549255,
+    "xgb_best_params_randomized": {
+        "subsample": 0.6,
+        "reg_lambda": 5,
+        "reg_alpha": 5,
+        "n_estimators": 800,
+        "max_depth": 3,
+        "learning_rate": 0.1,
+        "gamma": 0.4,
+        "colsample_bytree": 0.9
+    },
+    "xgb_best_params_grid": {
+        "colsample_bytree": 0.9,
+        "gamma": 0.4,
+        "learning_rate": 0.1,
+        "max_depth": 2,
+        "n_estimators": 825,
+        "reg_alpha": 5,
+        "reg_lambda": 5,
+        "subsample": 0.6
+    }
+}
