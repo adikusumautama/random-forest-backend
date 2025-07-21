@@ -203,6 +203,12 @@ model_metadata = {
 with open('model_metadata.json', 'w') as f:
     json.dump(model_metadata, f, indent=4)
 
+# --- 7. Menampilkan Feature Importance ---
+print("\nFeature Importance dari Model XGBoost:")
+for name, importance in zip(feature_column_names, best_xgb_model_tuned.feature_importances_):
+    print(f"  - {name:25s}: {importance:.4f}")
+
+
 print("Model dan metadata berhasil disimpan.")
 
 # --- 7. Analisis SHAP ---
