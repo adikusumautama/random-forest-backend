@@ -80,10 +80,10 @@ df['cos_minggu_1'] = np.cos(2 * np.pi * 1 * df['hari_ke'] / P_week)
 # Gunakan statistik yang dihitung dari data latih untuk mengisi nilai yang hilang
 df['penjualan_kemarin'] = df['Galon Terjual_winsorized'].shift(1).fillna(static_default_avg_winsorized)
 df['penjualan_2hari_lalu'] = df['Galon Terjual_winsorized'].shift(2).fillna(static_default_avg_winsorized)
-df['rata2_3hari'] = df['Galon Terjual_winsorized'].rolling(window=3, min_periods=1).mean().bfill().fillna(static_default_avg_winsorized)
-df['rata2_7hari'] = df['Galon Terjual_winsorized'].rolling(window=7, min_periods=1).mean().bfill().fillna(static_default_avg_winsorized)
-df['rata2_14hari'] = df['Galon Terjual_winsorized'].rolling(window=14, min_periods=1).mean().bfill().fillna(static_default_avg_winsorized)
-df['std_7hari'] = df['Galon Terjual_winsorized'].rolling(window=7, min_periods=1).std().fillna(static_default_std_winsorized)
+df['rata2_3hari'] = df['Galon Terjual_winsorized'].shift(1).rolling(window=3, min_periods=1).mean().fillna(static_default_avg_winsorized)
+df['rata2_7hari'] = df['Galon Terjual_winsorized'].shift(1).rolling(window=7, min_periods=1).mean().fillna(static_default_avg_winsorized)
+df['rata2_14hari'] = df['Galon Terjual_winsorized'].shift(1).rolling(window=14, min_periods=1).mean().fillna(static_default_avg_winsorized)
+df['std_7hari'] = df['Galon Terjual_winsorized'].shift(1).rolling(window=7, min_periods=1).std().fillna(static_default_std_winsorized)
 df['delta_penjualan'] = df['Galon Terjual_winsorized'].diff().fillna(0)
 
 # Membersihkan baris dengan nilai NaN pada kolom target

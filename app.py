@@ -123,10 +123,10 @@ def build_features(df_full, predict_date, transform_stats):
     # Buat fitur lag/rolling dari kolom yang sudah di-winsorize
     df["penjualan_kemarin"] = df["Galon Terjual_winsorized"].shift(1).fillna(static_default_avg)
     df["penjualan_2hari_lalu"] = df["Galon Terjual_winsorized"].shift(2).fillna(static_default_avg)
-    df["rata2_3hari"] = df["Galon Terjual_winsorized"].rolling(window=3, min_periods=1).mean().bfill().fillna(static_default_avg)
-    df["rata2_7hari"] = df["Galon Terjual_winsorized"].rolling(window=7, min_periods=1).mean().bfill().fillna(static_default_avg)
-    df["rata2_14hari"] = df["Galon Terjual_winsorized"].rolling(window=14, min_periods=1).mean().bfill().fillna(static_default_avg)
-    df["std_7hari"] = df["Galon Terjual_winsorized"].rolling(window=7, min_periods=1).std().fillna(static_default_std)
+    df["rata2_3hari"] = df["Galon Terjual_winsorized"].shift(1).rolling(window=3, min_periods=1).mean().fillna(static_default_avg)
+    df["rata2_7hari"] = df["Galon Terjual_winsorized"].shift(1).rolling(window=7, min_periods=1).mean().fillna(static_default_avg)
+    df["rata2_14hari"] = df["Galon Terjual_winsorized"].shift(1).rolling(window=14, min_periods=1).mean().fillna(static_default_avg)
+    df["std_7hari"] = df["Galon Terjual_winsorized"].shift(1).rolling(window=7, min_periods=1).std().fillna(static_default_std)
     df["delta_penjualan"] = df["Galon Terjual_winsorized"].diff().fillna(0)
 
     df['is_zero_sale_day'] = (df['Galon Terjual'] == 0).astype(int)

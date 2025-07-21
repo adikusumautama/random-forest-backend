@@ -36,27 +36,27 @@
         "static_default_std_winsorized": 29.223174706693495
     },
     "model_type": "XGBRegressor",
-    "xgb_rmse": 3.2792270782476916,
-    "xgb_mae": 2.4484493732452393,
-    "xgb_r2": 0.9819236993789673,
+    "xgb_rmse": 4.021465877659014,
+    "xgb_mae": 2.912088394165039,
+    "xgb_r2": 0.9728145599365234,
     "xgb_best_params_randomized": {
-        "subsample": 0.6,
-        "reg_lambda": 5,
-        "reg_alpha": 5,
-        "n_estimators": 800,
-        "max_depth": 3,
+        "subsample": 0.8,
+        "reg_lambda": 0.5,
+        "reg_alpha": 1,
+        "n_estimators": 500,
+        "max_depth": 5,
         "learning_rate": 0.1,
-        "gamma": 0.4,
+        "gamma": 0.5,
         "colsample_bytree": 0.9
     },
     "xgb_best_params_grid": {
         "colsample_bytree": 0.9,
-        "gamma": 0.4,
-        "learning_rate": 0.11,
-        "max_depth": 2,
-        "n_estimators": 825,
-        "reg_alpha": 5,
-        "reg_lambda": 5,
-        "subsample": 0.6
+        "gamma": 0.5,
+        "learning_rate": 0.1,
+        "max_depth": 4,
+        "n_estimators": 500,
+        "reg_alpha": 1,
+        "reg_lambda": 0.5,
+        "subsample": 0.8
     }
 }
