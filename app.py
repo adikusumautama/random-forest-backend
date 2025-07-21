@@ -32,11 +32,14 @@ try:
     with open("model_metadata.json", "r") as f:
         metadata = json.load(f)
     features = metadata["features"]
+    # Memuat statistik transformasi yang disimpan saat pelatihan
+    TRANSFORMATION_STATS = metadata.get("transformation_stats")
     training_start_date = datetime.fromisoformat(metadata["training_start_date"]).replace(tzinfo=None)
     print("* Model XGBoost dan metadata berhasil dimuat.")
 except Exception as e:
     model = None
     features = []
+    TRANSFORMATION_STATS = None
     training_start_date = None
     print(f"* Gagal memuat model atau metadata: {e}")
 
@@ -81,12 +84,21 @@ def get_sales_history_from_csv(csv_path="data/damiu.csv"):
         return pd.DataFrame(columns=["Tanggal", "Galon Terjual"])
 
 # --- Fungsi untuk Membangun Fitur untuk Prediksi ---
-def build_features(df_full, predict_date, static_default_avg_winsorized, static_default_std_winsorized):
+def build_features(df_full, predict_date, transform_stats):
+    # Ekstrak statistik yang sudah dihitung saat pelatihan
+    lower_bound = transform_stats['winsor_lower_bound']
+    upper_bound = transform_stats['winsor_upper_bound']
+    static_default_avg = transform_stats['static_default_avg_winsorized']
+    static_default_std = transform_stats['static_default_std_winsorized']
+
+    # Terapkan winsorisasi pada data historis menggunakan batas yang sama saat pelatihan
+    df_full['Galon Terjual_winsorized'] = df_full['Galon Terjual'].clip(lower=lower_bound, upper=upper_bound)
+
     df = pd.concat([df_full, pd.DataFrame([{"Tanggal": predict_date, "Galon Terjual": np.nan}])], ignore_index=True)
     df["Tanggal"] = pd.to_datetime(df["Tanggal"])
     df = df.sort_values(by="Tanggal").reset_index(drop=True)
 
-    # Rekayasa fitur (harus sama persis dengan skrip pelatihan)
+    # Rekayasa fitur (harus sama persis dengan skrip pelatihan, kecuali winsorisasi)
     indo_holidays = holidays.Indonesia()
     df["hari_ke"] = (df["Tanggal"] - training_start_date).dt.days
     df["hari_dalam_minggu"] = df["Tanggal"].apply(lambda x: x.isoweekday())
@@ -108,13 +120,14 @@ def build_features(df_full, predict_date, static_default_avg_winsorized, static_
     df['sin_minggu_1'] = np.sin(2 * np.pi * 1 * df['hari_ke'] / P_week)
     df['cos_minggu_1'] = np.cos(2 * np.pi * 1 * df['hari_ke'] / P_week)
 
-    df["penjualan_kemarin"] = df["Galon Terjual"].shift(1).fillna(static_default_avg_winsorized)
-    df["penjualan_2hari_lalu"] = df["Galon Terjual"].shift(2).fillna(static_default_avg_winsorized)
-    df["rata2_3hari"] = df["Galon Terjual"].rolling(window=3, min_periods=1).mean().bfill().fillna(static_default_avg_winsorized)
-    df["rata2_7hari"] = df["Galon Terjual"].rolling(window=7, min_periods=1).mean().bfill().fillna(static_default_avg_winsorized)
-    df["rata2_14hari"] = df["Galon Terjual"].rolling(window=14, min_periods=1).mean().bfill().fillna(static_default_avg_winsorized)
-    df["std_7hari"] = df["Galon Terjual"].rolling(window=7, min_periods=1).std().fillna(static_default_std_winsorized)
-    df["delta_penjualan"] = df["Galon Terjual"].diff().fillna(0)
+    # Buat fitur lag/rolling dari kolom yang sudah di-winsorize
+    df["penjualan_kemarin"] = df["Galon Terjual_winsorized"].shift(1).fillna(static_default_avg)
+    df["penjualan_2hari_lalu"] = df["Galon Terjual_winsorized"].shift(2).fillna(static_default_avg)
+    df["rata2_3hari"] = df["Galon Terjual_winsorized"].rolling(window=3, min_periods=1).mean().bfill().fillna(static_default_avg)
+    df["rata2_7hari"] = df["Galon Terjual_winsorized"].rolling(window=7, min_periods=1).mean().bfill().fillna(static_default_avg)
+    df["rata2_14hari"] = df["Galon Terjual_winsorized"].rolling(window=14, min_periods=1).mean().bfill().fillna(static_default_avg)
+    df["std_7hari"] = df["Galon Terjual_winsorized"].rolling(window=7, min_periods=1).std().fillna(static_default_std)
+    df["delta_penjualan"] = df["Galon Terjual_winsorized"].diff().fillna(0)
 
     df['is_zero_sale_day'] = (df['Galon Terjual'] == 0).astype(int)
     zero_sale_dates = df[df['is_zero_sale_day'] == 1]['Tanggal']
@@ -135,8 +148,8 @@ def build_features(df_full, predict_date, static_default_avg_winsorized, static_
 # --- Endpoint Prediksi ---
 @app.route("/predict", methods=["POST"])
 def predict():
-    if model is None or training_start_date is None:
-        return jsonify({"error": "Model belum siap atau metadata tidak lengkap."}), 500
+    if model is None or training_start_date is None or TRANSFORMATION_STATS is None:
+        return jsonify({"error": "Model belum siap atau metadata/statistik transformasi tidak lengkap."}), 500
 
     try:
         req = request.get_json()
@@ -155,17 +168,10 @@ def predict():
         else:
             return jsonify({"error": "Nilai 'data_source' tidak valid. Gunakan 'firestore' atau 'csv'."}), 400
 
-        # Hitung nilai winsorisasi dan default statis dari data historis
-        lower_bound = df_hist_initial["Galon Terjual"].quantile(0.05)
-        upper_bound = df_hist_initial["Galon Terjual"].quantile(0.95)
-        winsorized_sales = df_hist_initial["Galon Terjual"].clip(lower=lower_bound, upper=upper_bound)
-        static_default_avg = winsorized_sales.mean()
-        static_default_std = winsorized_sales.std()
-
         last_historical_date = df_hist_initial["Tanggal"].max()
         target_date = last_historical_date + timedelta(days=1)
         
-        feature_df = build_features(df_hist_initial, target_date, static_default_avg, static_default_std)
+        feature_df = build_features(df_hist_initial, target_date, TRANSFORMATION_STATS)
 
         print("\n==============================")
         print(f"Prediksi Tanggal: {target_date.strftime('%A, %d %B %Y')}")
@@ -175,25 +181,26 @@ def predict():
 
         # Lakukan prediksi dengan model tunggal
         prediction = model.predict(feature_df)[0]
-        pred_candidate = max(0, round(prediction, 1))
 
         # Aturan pasca-pemrosesan sederhana
         max_daily_decrease_ratio = 0.60
         previous_day_sale = df_hist_initial["Galon Terjual"].iloc[-1]
-        minimum_allowed_prediction = round(previous_day_sale * max_daily_decrease_ratio, 1)
+        minimum_allowed_prediction = previous_day_sale * max_daily_decrease_ratio
         
-        pred_final = pred_candidate
-        if pred_candidate < minimum_allowed_prediction:
-            print(f"  INFO: Prediksi awal {pred_candidate:.1f} disesuaikan menjadi {minimum_allowed_prediction:.1f}")
-            pred_final = max(0, minimum_allowed_prediction)
+        # Bandingkan prediksi awal dengan batas bawah
+        pred_adjusted = max(prediction, minimum_allowed_prediction)
+        
+        # Pastikan hasil akhir tidak negatif dan bulatkan
+        pred_final = max(0, round(pred_adjusted, 2))
 
         print(f"\nPrediksi dari Model XGBoost: {prediction:.2f}")
         print(f"Prediksi Akhir (setelah penyesuaian): {pred_final:.2f} galon")
         print("==============================")
 
+        # Konversi tipe data numpy.float32 ke float standar Python
         prediction_output = {
             "Tanggal": target_date.strftime("%Y-%m-%d"),
-            "Prediksi Galon": pred_final
+            "Prediksi Galon": float(pred_final)
         }
 
         return jsonify({

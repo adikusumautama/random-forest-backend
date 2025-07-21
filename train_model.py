@@ -22,8 +22,30 @@ df = df.sort_values(by='Tanggal')
 all_dates = pd.date_range(start=df['Tanggal'].min(), end=df['Tanggal'].max(), freq='D')
 df = df.set_index('Tanggal').reindex(all_dates).rename_axis('Tanggal').reset_index()
 
+# Mengonversi 'Galon Terjual' menjadi numerik di awal, menangani nilai non-numerik
+df['Galon Terjual'] = pd.to_numeric(df['Galon Terjual'], errors='coerce')
+
+# --- Pra-pembagian data untuk statistik ---
+# Membagi data lebih awal untuk menghindari kebocoran data dari set uji
+train_size_ratio = 0.8
+train_index_end = int(len(df) * train_size_ratio)
+df_train_for_stats = df.iloc[:train_index_end].copy()
+
 # --- 2. Rekayasa Fitur (Feature Engineering) ---
 print("Melakukan rekayasa fitur...")
+
+# Menghitung statistik dari data latih
+lower_bound = df_train_for_stats['Galon Terjual'].quantile(0.05)
+upper_bound = df_train_for_stats['Galon Terjual'].quantile(0.95)
+
+# Terapkan winsorisasi pada data latih untuk menghitung mean/std yang stabil
+train_sales_winsorized = df_train_for_stats['Galon Terjual'].clip(lower=lower_bound, upper=upper_bound)
+static_default_avg_winsorized = train_sales_winsorized.mean()
+static_default_std_winsorized = train_sales_winsorized.std()
+
+# Terapkan winsorisasi ke seluruh dataset menggunakan batas dari data latih
+df['Galon Terjual_winsorized'] = df['Galon Terjual'].clip(lower=lower_bound, upper=upper_bound)
+
 # Fitur Hari Libur Nasional
 indo_holidays = holidays.Indonesia()
 df['is_holiday'] = df['Tanggal'].apply(lambda date: 1 if date in indo_holidays else 0).astype(int)
@@ -54,25 +76,14 @@ P_week = 7
 df['sin_minggu_1'] = np.sin(2 * np.pi * 1 * df['hari_ke'] / P_week)
 df['cos_minggu_1'] = np.cos(2 * np.pi * 1 * df['hari_ke'] / P_week)
 
-# Memastikan kolom target adalah numerik
-df['Galon Terjual'] = pd.to_numeric(df['Galon Terjual'], errors='coerce')
-
-# Penanganan Outlier Sederhana (Winsorization)
-lower_bound = df['Galon Terjual'].quantile(0.05)
-upper_bound = df['Galon Terjual'].quantile(0.95)
-df['Galon Terjual_winsorized'] = df['Galon Terjual'].clip(lower=lower_bound, upper=upper_bound)
-
-# Menghitung nilai default untuk mengisi data yang hilang
-static_default_avg_winsorized_train = df['Galon Terjual_winsorized'].mean()
-static_default_std_winsorized_train = df['Galon Terjual_winsorized'].std()
-
 # Fitur Lag dan Rolling Window
-df['penjualan_kemarin'] = df['Galon Terjual_winsorized'].shift(1).fillna(static_default_avg_winsorized_train)
-df['penjualan_2hari_lalu'] = df['Galon Terjual_winsorized'].shift(2).fillna(static_default_avg_winsorized_train)
-df['rata2_3hari'] = df['Galon Terjual_winsorized'].rolling(window=3, min_periods=1).mean().bfill().fillna(static_default_avg_winsorized_train)
-df['rata2_7hari'] = df['Galon Terjual_winsorized'].rolling(window=7, min_periods=1).mean().bfill().fillna(static_default_avg_winsorized_train)
-df['rata2_14hari'] = df['Galon Terjual_winsorized'].rolling(window=14, min_periods=1).mean().bfill().fillna(static_default_avg_winsorized_train)
-df['std_7hari'] = df['Galon Terjual_winsorized'].rolling(window=7, min_periods=1).std().fillna(static_default_std_winsorized_train)
+# Gunakan statistik yang dihitung dari data latih untuk mengisi nilai yang hilang
+df['penjualan_kemarin'] = df['Galon Terjual_winsorized'].shift(1).fillna(static_default_avg_winsorized)
+df['penjualan_2hari_lalu'] = df['Galon Terjual_winsorized'].shift(2).fillna(static_default_avg_winsorized)
+df['rata2_3hari'] = df['Galon Terjual_winsorized'].rolling(window=3, min_periods=1).mean().bfill().fillna(static_default_avg_winsorized)
+df['rata2_7hari'] = df['Galon Terjual_winsorized'].rolling(window=7, min_periods=1).mean().bfill().fillna(static_default_avg_winsorized)
+df['rata2_14hari'] = df['Galon Terjual_winsorized'].rolling(window=14, min_periods=1).mean().bfill().fillna(static_default_avg_winsorized)
+df['std_7hari'] = df['Galon Terjual_winsorized'].rolling(window=7, min_periods=1).std().fillna(static_default_std_winsorized)
 df['delta_penjualan'] = df['Galon Terjual_winsorized'].diff().fillna(0)
 
 # Membersihkan baris dengan nilai NaN pada kolom target
@@ -108,8 +119,7 @@ y = df[target_column_name]
 
 # --- 3. Pembagian Data ---
 print("Membagi data menjadi set pelatihan dan pengujian...")
-train_size_ratio = 0.8
-train_index_end = int(len(df) * train_size_ratio)
+# Indeks pembagian sudah dihitung sebelumnya, gunakan kembali di sini
 X_train, X_test = X.iloc[:train_index_end], X.iloc[train_index_end:]
 y_train, y_test = y.iloc[:train_index_end], y.iloc[train_index_end:]
 
@@ -192,6 +202,12 @@ model_metadata = {
     'features': feature_column_names,
     'training_start_date': df['Tanggal'].min().isoformat(),
     'training_end_date': df['Tanggal'].max().isoformat(),
+    'transformation_stats': {
+        'winsor_lower_bound': lower_bound,
+        'winsor_upper_bound': upper_bound,
+        'static_default_avg_winsorized': static_default_avg_winsorized,
+        'static_default_std_winsorized': static_default_std_winsorized
+    },
     'model_type': 'XGBRegressor',
     'xgb_rmse': rmse_xgb_tuned,
     'xgb_mae': mae_xgb_tuned,

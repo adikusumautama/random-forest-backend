@@ -29,10 +29,16 @@
     ],
     "training_start_date": "2022-07-04T00:00:00",
     "training_end_date": "2025-06-10T00:00:00",
+    "transformation_stats": {
+        "winsor_lower_bound": 0.0,
+        "winsor_upper_bound": 87.0,
+        "static_default_avg_winsorized": 31.037296037296038,
+        "static_default_std_winsorized": 29.223174706693495
+    },
     "model_type": "XGBRegressor",
-    "xgb_rmse": 4.175673223798558,
-    "xgb_mae": 2.8056416511535645,
-    "xgb_r2": 0.9706897139549255,
+    "xgb_rmse": 3.2792270782476916,
+    "xgb_mae": 2.4484493732452393,
+    "xgb_r2": 0.9819236993789673,
     "xgb_best_params_randomized": {
         "subsample": 0.6,
         "reg_lambda": 5,
@@ -46,7 +52,7 @@
     "xgb_best_params_grid": {
         "colsample_bytree": 0.9,
         "gamma": 0.4,
-        "learning_rate": 0.1,
+        "learning_rate": 0.11,
         "max_depth": 2,
         "n_estimators": 825,
         "reg_alpha": 5,
