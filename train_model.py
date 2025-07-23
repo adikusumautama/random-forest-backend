@@ -187,9 +187,9 @@ mse_xgb_tuned = mean_squared_error(y_test, y_pred_xgb_tuned)
 mae_xgb_tuned = mean_absolute_error(y_test, y_pred_xgb_tuned)
 rmse_xgb_tuned = np.sqrt(mse_xgb_tuned)
 r2_xgb_tuned = r2_score(y_test, y_pred_xgb_tuned)
-print(f"Mean Squared Error (MSE): {mse_xgb_tuned:.2f}")
+# print(f"Mean Squared Error (MSE): {mse_xgb_tuned:.2f}")
 print(f"Root Mean Squared Error (RMSE): {rmse_xgb_tuned:.2f}")
-print(f"Mean Absolute Error (MAE): {mae_xgb_tuned:.2f}")
+# print(f"Mean Absolute Error (MAE): {mae_xgb_tuned:.2f}")
 print(f"R-squared (R2): {r2_xgb_tuned:.2f}")
 
 # --- 6. Penyimpanan Model dan Metadata ---

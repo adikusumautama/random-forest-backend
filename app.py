@@ -197,7 +197,6 @@ def predict():
         print(f"Prediksi Akhir (setelah penyesuaian): {pred_final:.2f} galon")
         print("==============================")
 
-        # Konversi tipe data numpy.float32 ke float standar Python
         prediction_output = {
             "Tanggal": target_date.strftime("%Y-%m-%d"),
             "Prediksi Galon": float(pred_final)
