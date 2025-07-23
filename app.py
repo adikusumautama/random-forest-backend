@@ -152,25 +152,15 @@ def predict():
         return jsonify({"error": "Model belum siap atau metadata/statistik transformasi tidak lengkap."}), 500
 
     try:
-        req = request.get_json()
-        data_source = req.get("data_source", "firestore")
-
-        if data_source == "firestore":
-            df_hist_initial = get_sales_history()
-            if df_hist_initial.empty:
-                return jsonify({"error": "Tidak ada data historis di Firestore."}), 400
-            print("* Menggunakan data historis dari Firestore.")
-        elif data_source == "csv":
-            df_hist_initial = get_sales_history_from_csv()
-            if df_hist_initial.empty:
-                return jsonify({"error": "Tidak ada data historis di file CSV."}), 400
-            print("* Menggunakan data historis dari file CSV.")
-        else:
-            return jsonify({"error": "Nilai 'data_source' tidak valid. Gunakan 'firestore' atau 'csv'."}), 400
+        # Langsung ambil data historis dari Firestore (karena hanya ini yang dipakai)
+        df_hist_initial = get_sales_history()
+        if df_hist_initial.empty:
+            return jsonify({"error": "Tidak ada data historis di Firestore."}), 400
+        print("* Menggunakan data historis dari Firestore.")
 
         last_historical_date = df_hist_initial["Tanggal"].max()
         target_date = last_historical_date + timedelta(days=1)
-        
+
         feature_df = build_features(df_hist_initial, target_date, TRANSFORMATION_STATS)
 
         print("\n==============================")
@@ -179,18 +169,16 @@ def predict():
         for col in feature_df.columns:
             print(f"  - {col:25s}: {feature_df.iloc[0][col]:.4f}")
 
-        # Lakukan prediksi dengan model tunggal
+        # Lakukan prediksi
         prediction = model.predict(feature_df)[0]
 
-        # Aturan pasca-pemrosesan sederhana
+        # Aturan pasca-pemrosesan
         max_daily_decrease_ratio = 0.60
         previous_day_sale = df_hist_initial["Galon Terjual"].iloc[-1]
         minimum_allowed_prediction = previous_day_sale * max_daily_decrease_ratio
-        
-        # Bandingkan prediksi awal dengan batas bawah
+
+        # Penyesuaian prediksi
         pred_adjusted = max(prediction, minimum_allowed_prediction)
-        
-        # Pastikan hasil akhir tidak negatif dan bulatkan
         pred_final = max(0, round(pred_adjusted, 2))
 
         print(f"\nPrediksi dari Model XGBoost: {prediction:.2f}")
@@ -211,6 +199,7 @@ def predict():
         import traceback
         traceback.print_exc()
         return jsonify({"error": f"Terjadi kesalahan di server: {str(e)}"}), 500
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
