@@ -5,22 +5,25 @@ import numpy as np
 import joblib
 import json
 from xgboost import XGBRegressor
+import holidays
 import matplotlib.pyplot as plt
 
 # --- 1. Pemuatan dan Pra-pemrosesan Data ---
 print("Memuat dan memproses data...")
-# Membaca CSV dengan header yang sesuai dengan data baru
-df = pd.read_csv('data/damiu.csv', header=None, names=['hari_ke', 'Galon Terjual'])
+# Membaca CSV tanpa header dan memberikan nama kolom secara eksplisit
+df = pd.read_csv('data/damiu.csv', header=None, names=['Tanggal', '_day_num_from_csv', 'Galon Terjual'])
 
-# Mengurutkan berdasarkan 'hari_ke' (pengganti tanggal)
-df = df.sort_values(by='hari_ke').reset_index(drop=True)
+# Mengurai dan mengurutkan tanggal
+df['Tanggal'] = pd.to_datetime(df['Tanggal'], format='%Y-%m-%d', errors='coerce')
+df.dropna(subset=['Tanggal'], inplace=True)
+df = df.sort_values(by='Tanggal')
 
-# Mengonversi 'Galon Terjual' menjadi numerik, menangani nilai non-numerik
+# Mengisi tanggal yang hilang untuk memastikan data runtun waktu kontinu
+all_dates = pd.date_range(start=df['Tanggal'].min(), end=df['Tanggal'].max(), freq='D')
+df = df.set_index('Tanggal').reindex(all_dates).rename_axis('Tanggal').reset_index()
+
+# Mengonversi 'Galon Terjual' menjadi numerik di awal, menangani nilai non-numerik
 df['Galon Terjual'] = pd.to_numeric(df['Galon Terjual'], errors='coerce')
-
-df['hari_ke'] = pd.to_numeric(df['hari_ke'], errors='coerce')
-
-df.dropna(subset=['Galon Terjual', 'hari_ke'], inplace=True) # Menghapus baris jika target atau hari_ke adalah NaN
 
 # --- Pra-pembagian data untuk statistik ---
 # Membagi data lebih awal untuk menghindari kebocoran data dari set uji
@@ -43,7 +46,26 @@ static_default_std_winsorized = train_sales_winsorized.std()
 # Terapkan winsorisasi ke seluruh dataset menggunakan batas dari data latih
 df['Galon Terjual_winsorized'] = df['Galon Terjual'].clip(lower=lower_bound, upper=upper_bound)
 
-# Fitur Musiman menggunakan Fourier Terms (berbasis hari_ke)
+# Fitur Hari Libur Nasional
+indo_holidays = holidays.Indonesia()
+df['is_holiday'] = df['Tanggal'].apply(lambda date: 1 if date in indo_holidays else 0).astype(int)
+
+# Fitur berbasis waktu dasar
+df['hari_ke'] = (df['Tanggal'] - df['Tanggal'].min()).dt.days
+df['hari_dalam_minggu'] = df['Tanggal'].apply(lambda x: x.isoweekday()) # Senin=1, Minggu=7
+df['bulan'] = df['Tanggal'].dt.month
+df['minggu_ke'] = df['Tanggal'].dt.isocalendar().week.astype(int)
+df['tahun'] = df['Tanggal'].dt.year
+df['is_weekend'] = df['hari_dalam_minggu'].isin([6, 7]).astype(int)
+
+# Fitur Awal/Akhir Bulan
+df['is_awal_bulan'] = (df['Tanggal'].dt.day <= 3).astype(int)
+df['is_akhir_bulan'] = (df['Tanggal'].dt.day >= 28).astype(int)
+
+# Fitur Interaksi
+df['hari_minggu_x_holiday'] = df['hari_dalam_minggu'] * df['is_holiday']
+
+# Fitur Musiman menggunakan Fourier Terms
 P_year = 365.25
 df['sin_tahun_1'] = np.sin(2 * np.pi * 1 * df['hari_ke'] / P_year)
 df['cos_tahun_1'] = np.cos(2 * np.pi * 1 * df['hari_ke'] / P_year)
@@ -64,17 +86,31 @@ df['rata2_14hari'] = df['Galon Terjual_winsorized'].shift(1).rolling(window=14, 
 df['std_7hari'] = df['Galon Terjual_winsorized'].shift(1).rolling(window=7, min_periods=1).std().fillna(static_default_std_winsorized)
 df['delta_penjualan'] = df['Galon Terjual_winsorized'].diff().fillna(0)
 
-# Membersihkan baris dengan nilai NaN pada kolom target (jika ada lagi setelah pra-pemrosesan)
+# Membersihkan baris dengan nilai NaN pada kolom target
 df.dropna(subset=['Galon Terjual'], inplace=True)
 
-# Daftar nama kolom fitur yang diperbarui
+# Daftar nama kolom fitur
 feature_column_names = [
-    'hari_ke',
+    'hari_ke', 'hari_dalam_minggu', 'bulan', 'minggu_ke', 'tahun', 'is_weekend',
+    'is_awal_bulan', 'is_akhir_bulan', 'is_holiday', 'hari_minggu_x_holiday',
     'penjualan_kemarin', 'penjualan_2hari_lalu', 'rata2_3hari', 'rata2_7hari',
-    'rata2_14hari', 'std_7hari', 'delta_penjualan',
-    'sin_tahun_1', 'cos_tahun_1', 'sin_tahun_2', 'cos_tahun_2',
-    'sin_minggu_1', 'cos_minggu_1'
+    'rata2_14hari', 'std_7hari', 'delta_penjualan', 'sin_tahun_1', 'cos_tahun_1',
+    'sin_tahun_2', 'cos_tahun_2', 'sin_minggu_1', 'cos_minggu_1'
 ]
+
+# Fitur terkait hari dengan penjualan nol
+df['is_zero_sale_day'] = (df['Galon Terjual'] == 0).astype(int)
+zero_sale_dates = df[df['is_zero_sale_day'] == 1]['Tanggal']
+if not zero_sale_dates.empty:
+    zero_sale_series = pd.Series(zero_sale_dates.values, index=zero_sale_dates)
+    last_zero_sale_date = zero_sale_series.reindex(df['Tanggal'], method='ffill')
+    df['days_since_last_zero_sale'] = (df['Tanggal'] - last_zero_sale_date).dt.days.fillna(df['hari_ke'])
+else:
+    df['days_since_last_zero_sale'] = df['hari_ke']
+df['is_day_after_zero_sale'] = df['is_zero_sale_day'].shift(1).fillna(0).astype(int)
+
+# Menambahkan fitur baru ke daftar kolom
+feature_column_names.extend(['is_zero_sale_day', 'days_since_last_zero_sale', 'is_day_after_zero_sale'])
 
 target_column_name = 'Galon Terjual'
 
@@ -151,7 +187,9 @@ mse_xgb_tuned = mean_squared_error(y_test, y_pred_xgb_tuned)
 mae_xgb_tuned = mean_absolute_error(y_test, y_pred_xgb_tuned)
 rmse_xgb_tuned = np.sqrt(mse_xgb_tuned)
 r2_xgb_tuned = r2_score(y_test, y_pred_xgb_tuned)
+# print(f"Mean Squared Error (MSE): {mse_xgb_tuned:.2f}")
 print(f"Root Mean Squared Error (RMSE): {rmse_xgb_tuned:.2f}")
+# print(f"Mean Absolute Error (MAE): {mae_xgb_tuned:.2f}")
 print(f"R-squared (R2): {r2_xgb_tuned:.2f}")
 
 # --- 6. Penyimpanan Model dan Metadata ---
@@ -162,7 +200,8 @@ joblib.dump(best_xgb_model_tuned, 'xgboost_gallon_model.joblib')
 # Simpan metadata model
 model_metadata = {
     'features': feature_column_names,
-    # 'training_start_date' dan 'training_end_date' dihapus
+    'training_start_date': df['Tanggal'].min().isoformat(),
+    'training_end_date': df['Tanggal'].max().isoformat(),
     'transformation_stats': {
         'winsor_lower_bound': lower_bound,
         'winsor_upper_bound': upper_bound,
@@ -185,6 +224,7 @@ print("\nFeature Importance dari Model XGBoost:")
 for name, importance in zip(feature_column_names, best_xgb_model_tuned.feature_importances_):
     print(f"  - {name:25s}: {importance:.4f}")
 
+
 print("Model dan metadata berhasil disimpan.")
 
 # --- 7. Analisis SHAP ---
@@ -192,9 +232,11 @@ try:
     import shap
     print("\nMelakukan analisis SHAP untuk XGBoost...")
 
+    # Gunakan TreeExplainer untuk model XGBoost
     explainer_xgb = shap.TreeExplainer(best_xgb_model_tuned)
     shap_values_xgb = explainer_xgb.shap_values(X_test)
 
+    # Simpan plot SHAP Summary
     print("Menyimpan plot SHAP Summary...")
     shap.summary_plot(shap_values_xgb, X_test, feature_names=feature_column_names, show=False)
     plt.savefig("shap_summary_xgb.png", bbox_inches='tight')

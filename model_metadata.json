@@ -1,15 +1,6 @@
 {
     "features": [
         "hari_ke",
-        "hari_dalam_minggu",
-        "bulan",
-        "minggu_ke",
-        "tahun",
-        "is_weekend",
-        "is_awal_bulan",
-        "is_akhir_bulan",
-        "is_holiday",
-        "hari_minggu_x_holiday",
         "penjualan_kemarin",
         "penjualan_2hari_lalu",
         "rata2_3hari",
@@ -22,41 +13,36 @@
         "sin_tahun_2",
         "cos_tahun_2",
         "sin_minggu_1",
-        "cos_minggu_1",
-        "is_zero_sale_day",
-        "days_since_last_zero_sale",
-        "is_day_after_zero_sale"
+        "cos_minggu_1"
     ],
-    "training_start_date": "2022-07-04T00:00:00",
-    "training_end_date": "2025-06-10T00:00:00",
     "transformation_stats": {
-        "winsor_lower_bound": 0.0,
-        "winsor_upper_bound": 87.0,
-        "static_default_avg_winsorized": 31.037296037296038,
-        "static_default_std_winsorized": 29.223174706693495
+        "winsor_lower_bound": 4.75,
+        "winsor_upper_bound": 96.0,
+        "static_default_avg_winsorized": 49.03602430555556,
+        "static_default_std_winsorized": 23.71684651651867
     },
     "model_type": "XGBRegressor",
-    "xgb_rmse": 4.021465877659014,
-    "xgb_mae": 2.912088394165039,
-    "xgb_r2": 0.9728145599365234,
+    "xgb_rmse": 3.7939878241698803,
+    "xgb_mae": 2.3270976344744363,
+    "xgb_r2": 0.9443155114723073,
     "xgb_best_params_randomized": {
-        "subsample": 0.8,
-        "reg_lambda": 0.5,
-        "reg_alpha": 1,
-        "n_estimators": 500,
-        "max_depth": 5,
-        "learning_rate": 0.1,
-        "gamma": 0.5,
-        "colsample_bytree": 0.9
+        "subsample": 0.7,
+        "reg_lambda": 1,
+        "reg_alpha": 0.5,
+        "n_estimators": 800,
+        "max_depth": 12,
+        "learning_rate": 0.15,
+        "gamma": 0.1,
+        "colsample_bytree": 1.0
     },
     "xgb_best_params_grid": {
-        "colsample_bytree": 0.9,
-        "gamma": 0.5,
-        "learning_rate": 0.1,
-        "max_depth": 4,
-        "n_estimators": 500,
-        "reg_alpha": 1,
-        "reg_lambda": 0.5,
-        "subsample": 0.8
+        "colsample_bytree": 1.0,
+        "gamma": 0.1,
+        "learning_rate": 0.15,
+        "max_depth": 11,
+        "n_estimators": 825,
+        "reg_alpha": 0.5,
+        "reg_lambda": 1,
+        "subsample": 0.7
     }
 }
