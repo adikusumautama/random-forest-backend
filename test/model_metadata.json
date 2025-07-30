@@ -1,94 +1,43 @@
 {
-    "features": [
-        "Hari",
-        "hari_ke",
-        "penjualan_kemarin",
-        "penjualan_2hari_lalu",
-        "rata2_3hari",
-        "rata2_7hari",
-        "rata2_14hari",
-        "std_7hari",
-        "delta_penjualan",
-        "sin_minggu",
-        "cos_minggu",
-        "rata2_per_hari",
-        "std_per_hari",
-        "is_noise_day_kemarin",
-        "is_spike_day_kemarin",
-        "is_urgent_delivery_kemarin",
-        "penjualan_kemarin_lebih_25",
-        "penjualan_kemarin_kurang_25",
-        "penjualan_kemarin_lebih_35",
-        "penjualan_kemarin_kurang_35",
-        "penjualan_kemarin_lebih_20",
-        "penjualan_kemarin_kurang_20"
+    "features_used": [
+        "hari_minggu",
+        "is_weekend",
+        "awal_bulan",
+        "akhir_bulan",
+        "hari_dalam_bulan",
+        "minggu_dalam_tahun",
+        "bulan",
+        "hari_dalam_tahun",
+        "lag_1",
+        "lag_2",
+        "lag_3",
+        "lag_7",
+        "lag_14",
+        "rolling_mean_3",
+        "rolling_mean_7",
+        "rolling_mean_14",
+        "rolling_std_3",
+        "rolling_std_7",
+        "rolling_std_14",
+        "lag_diff_1",
+        "lag_diff_7"
     ],
-    "recent_14_days_sales_for_prediction": [
-        30.0,
-        30.0,
-        37.0,
-        34.0,
-        36.0,
-        27.0,
-        27.0,
-        30.0,
-        24.0,
-        44.0,
-        50.0,
-        50.0,
-        24.0,
-        29.0
-    ],
-    "transformation_stats": {
-        "spike_threshold": 50,
-        "urgent_delivery_value": 40,
-        "noise_threshold": 10,
-        "static_default_avg": 48.69097222222222,
-        "static_default_std": 5.436269989704907
+    "business_rules": {
+        "lower_bound": 25.0,
+        "upper_bound": 52.0
     },
-    "day_of_week_stats": {
-        "1": {
-            "rata2_per_hari": 47.92941176470588,
-            "std_per_hari": 6.2560223086279345
-        },
-        "2": {
-            "rata2_per_hari": 48.096385542168676,
-            "std_per_hari": 7.1493040047254635
-        },
-        "3": {
-            "rata2_per_hari": 48.44,
-            "std_per_hari": 5.877671905357342
-        },
-        "4": {
-            "rata2_per_hari": 49.68115942028985,
-            "std_per_hari": 1.7945403608067336
-        },
-        "5": {
-            "rata2_per_hari": 48.890243902439025,
-            "std_per_hari": 5.691679214911553
-        },
-        "6": {
-            "rata2_per_hari": 48.98765432098765,
-            "std_per_hari": 4.437042447285389
-        },
-        "7": {
-            "rata2_per_hari": 48.93069306930693,
-            "std_per_hari": 4.870846796487394
-        }
+    "model_performance_on_historic_data": {
+        "mae": 7.177221004168192,
+        "rmse": 8.293967512706088,
+        "r2": 0.3738941827054243
     },
-    "model_performance_on_test_set": {
-        "mae": 9.040179252624512,
-        "rmse": 11.327576764751061,
-        "r2": -0.09606647491455078
-    },
-    "model_best_params": {
-        "learning_rate": 0.2,
-        "max_depth": 7,
-        "n_estimators": 450,
-        "subsample": 0.9,
-        "reg_lambda": 1,
-        "reg_alpha": 0,
-        "gamma": 0,
-        "colsample_bytree": 0.7
+    "best_hyperparameters": {
+        "colsample_bytree": 0.7,
+        "gamma": 0.1,
+        "learning_rate": 0.01,
+        "max_depth": 3,
+        "n_estimators": 400,
+        "reg_alpha": 0.1,
+        "subsample": 0.9
     }
 }

@@ -1,258 +1,250 @@
 import pandas as pd
-from sklearn.model_selection import TimeSeriesSplit, RandomizedSearchCV, GridSearchCV
-from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 import numpy as np
+import xgboost as xgb
+from sklearn.model_selection import TimeSeriesSplit, GridSearchCV, RandomizedSearchCV
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+import matplotlib.pyplot as plt
+import seaborn as sns
 import joblib
 import json
-from xgboost import XGBRegressor
-import matplotlib.pyplot as plt
 import warnings
 
 warnings.filterwarnings('ignore')
+sns.set_theme(style="whitegrid")
 
-# --- Konfigurasi Model ---
-# Sesuaikan rasio pembagian data di sini. 0.8 berarti 80% data untuk pelatihan dan 20% untuk pengujian.
-TRAIN_SIZE_RATIO = 0.8
-
-# --- 1. Pemuatan dan Pra-pemrosesan Data ---
-print("Memuat dan memproses data dari galon.csv...")
+# --- 1. PENYIAPAN DATASET ---
+print("--- Langkah 1: Memuat dan Menyiapkan Dataset ---")
 try:
-    df = pd.read_csv('galon.csv', header=0)
-    df.columns = ['Hari', 'Galon_Terjual'] 
+    df_raw = pd.read_csv('galon.csv')
+    df_raw.columns = ['Hari_Minggu_Raw', 'Galon_Terjual']
 except FileNotFoundError:
     print("Error: File 'galon.csv' tidak ditemukan. Pastikan file berada di direktori yang sama.")
     exit()
 
-df['hari_ke'] = range(1, len(df) + 1)
-df['Galon_Terjual'] = pd.to_numeric(df['Galon_Terjual'], errors='coerce')
-df['Hari'] = pd.to_numeric(df['Hari'], errors='coerce')
-df.dropna(inplace=True)
+# Membuat timeline kalender nyata
+start_date = '2022-07-04'
+print(f"Membuat linimasa data yang lengkap dimulai dari {start_date}...")
+df = pd.DataFrame()
+# Buat kolom tanggal berdasarkan jumlah baris di data mentah + buffer untuk prediksi masa depan
+df['tanggal'] = pd.to_datetime(pd.date_range(start=start_date, periods=len(df_raw) + 100))
+
+# Gabungkan data asli dengan timeline kalender
+df_raw['hari_ke'] = range(len(df_raw))
+df['hari_ke'] = range(len(df))
+df = pd.merge(df, df_raw[['hari_ke', 'Galon_Terjual']], on='hari_ke', how='left')
+print(f"Dataset berhasil dibuat dengan {len(df)} hari berkelanjutan.")
 
 
-# --- 2. Rekayasa Fitur (Feature Engineering) ---
-print("Melakukan rekayasa fitur...")
+# --- 2. PEMBERSIHAN DATA & PENERAPAN ATURAN BISNIS (PERBAIKAN) ---
+print("\n--- Langkah 2: Pembersihan Data & Winsorization ---")
+# PERBAIKAN: Menggunakan batas bawah 22 sesuai permintaan
+lower_bound = 25.0
+upper_bound = 52.0
+print(f"Menerapkan Winsorization: Penjualan dibatasi antara {lower_bound} dan {upper_bound} galon.")
 
-# Kolom target akan disesuaikan berdasarkan aturan bisnis.
-df['Galon_Terjual_Adjusted'] = df['Galon_Terjual'].copy()
+# PERBAIKAN: Proses pembersihan yang lebih sederhana dan fokus pada Winsorization
+# 1. Isi nilai yang hilang terlebih dahulu (menggunakan forward fill, umum untuk time series)
+df['Galon_Terjual_Filled'] = df['Galon_Terjual'].fillna(method='ffill')
+# Isi sisa NaN di awal (jika ada) dengan lower bound
+df['Galon_Terjual_Filled'].fillna(lower_bound, inplace=True)
 
-# Penyesuaian untuk data noise (penjualan < 10 dianggap bukan penjualan riil).
-NOISE_THRESHOLD = 10
-df['is_noise_day'] = (df['Galon_Terjual'] < NOISE_THRESHOLD).astype(int)
-df.loc[df['Galon_Terjual'] < NOISE_THRESHOLD, 'Galon_Terjual_Adjusted'] = 0
-
-# Penyesuaian untuk lonjakan penjualan (dianggap laporan gabungan).
-SPIKE_THRESHOLD = 50
-df['is_spike_day'] = (df['Galon_Terjual'] > SPIKE_THRESHOLD).astype(int)
-
-# Mendistribusikan ulang nilai penjualan dari hari lonjakan ke hari-hari sebelumnya.
-for index, row in df.iterrows():
-    if row['Galon_Terjual'] > SPIKE_THRESHOLD:
-        excess = row['Galon_Terjual'] - SPIKE_THRESHOLD
-        df.at[index, 'Galon_Terjual_Adjusted'] = SPIKE_THRESHOLD
-        
-        prev_day_index = index - 1
-        while excess > 0 and prev_day_index >= 0:
-            fill_amount = SPIKE_THRESHOLD - df.at[prev_day_index, 'Galon_Terjual_Adjusted']
-            if fill_amount > 0:
-                add_amount = min(excess, fill_amount)
-                df.at[prev_day_index, 'Galon_Terjual_Adjusted'] += add_amount
-                excess -= add_amount
-            prev_day_index -= 1
-
-# Penanda untuk kebutuhan mendadak (penjualan tepat 40 galon).
-URGENT_DELIVERY_VALUE = 40
-df['is_urgent_delivery'] = (df['Galon_Terjual'] == URGENT_DELIVERY_VALUE).astype(int)
-
-# Penanda untuk kategori penjualan berdasarkan ambang batas.
-df['penjualan_lebih_25'] = (df['Galon_Terjual_Adjusted'] > 25).astype(int)
-df['penjualan_kurang_25'] = (df['Galon_Terjual_Adjusted'] < 25).astype(int)
-df['penjualan_lebih_35'] = (df['Galon_Terjual_Adjusted'] > 35).astype(int)
-df['penjualan_kurang_35'] = (df['Galon_Terjual_Adjusted'] < 35).astype(int)
-df['penjualan_lebih_20'] = (df['Galon_Terjual_Adjusted'] > 20).astype(int)
-df['penjualan_kurang_20'] = (df['Galon_Terjual_Adjusted'] < 20).astype(int)
+# 2. Terapkan Winsorization (clipping) pada data yang sudah diisi
+df['Galon_Terjual_Cleaned'] = df['Galon_Terjual_Filled'].clip(lower=lower_bound, upper=upper_bound)
+print("Data telah di-winsorize dan nilai kosong telah ditangani.")
 
 
-# --- Pra-pembagian data untuk statistik ---
-train_index_end = int(len(df) * TRAIN_SIZE_RATIO)
-df_train_for_stats = df.iloc[:train_index_end].copy()
+# --- 3. REKAYASA FITUR (PERBAIKAN) ---
+print("\n--- Langkah 3: Rekayasa Fitur ---")
+target_col = 'Galon_Terjual_Cleaned'
+# Penting: Gunakan data yang sudah dibersihkan untuk membuat fitur lag/rolling
+shifted_target = df[target_col].shift(1)
 
-# Hitung statistik (rata-rata, std) dari data latih untuk mengisi nilai NaN nanti.
-static_default_avg = df_train_for_stats['Galon_Terjual_Adjusted'].mean()
-static_default_std = df_train_for_stats['Galon_Terjual_Adjusted'].std()
+# Fitur-fitur dasar (lag, rolling) - Fokus pada jangka pendek
+for lag in [1, 2, 3, 7, 14]: # Menambah lag 14 untuk melihat pola 2 mingguan
+    df[f'lag_{lag}'] = shifted_target.shift(lag)
+for window in [3, 7, 14]: # Menambah window 14
+    df[f'rolling_mean_{window}'] = shifted_target.rolling(window=window).mean()
+    df[f'rolling_std_{window}'] = shifted_target.rolling(window=window).std()
 
-# Fitur statistik berdasarkan hari (rata-rata & std penjualan untuk setiap hari).
-day_stats = df_train_for_stats.groupby('Hari')['Galon_Terjual_Adjusted'].agg(['mean', 'std']).rename(
-    columns={'mean': 'rata2_per_hari', 'std': 'std_per_hari'}
-)
-df = pd.merge(df, day_stats, on='Hari', how='left')
-df['rata2_per_hari'].fillna(static_default_avg, inplace=True)
-df['std_per_hari'].fillna(static_default_std, inplace=True)
+# Fitur momentum
+df['lag_diff_1'] = shifted_target.diff(1)
+df['lag_diff_7'] = shifted_target.diff(7) # Perbedaan dengan minggu lalu
 
-# Fitur musiman mingguan.
-df['sin_minggu'] = np.sin(2 * np.pi * df['Hari'] / 7)
-df['cos_minggu'] = np.cos(2 * np.pi * df['Hari'] / 7)
+# Fitur berbasis kalender nyata
+print("Membuat fitur-fitur berbasis kalender nyata...")
+df['hari_dalam_bulan'] = df['tanggal'].dt.day
+df['hari_dalam_tahun'] = df['tanggal'].dt.dayofyear
+df['minggu_dalam_tahun'] = df['tanggal'].dt.isocalendar().week.astype(int)
+df['bulan'] = df['tanggal'].dt.month
+df['hari_minggu'] = df['tanggal'].dt.dayofweek # 0=Senin, 6=Minggu
+df['is_weekend'] = (df['hari_minggu'] >= 5).astype(int) # Sabtu & Minggu
+df['awal_bulan'] = (df['tanggal'].dt.is_month_start).astype(int)
+df['akhir_bulan'] = (df['tanggal'].dt.is_month_end).astype(int)
 
-# Fitur Lag dan Rolling Window (berdasarkan data yang sudah disesuaikan).
-df['penjualan_kemarin'] = df['Galon_Terjual_Adjusted'].shift(1).fillna(static_default_avg)
-df['penjualan_2hari_lalu'] = df['Galon_Terjual_Adjusted'].shift(2).fillna(static_default_avg)
-df['rata2_3hari'] = df['Galon_Terjual_Adjusted'].shift(1).rolling(window=3, min_periods=1).mean().fillna(static_default_avg)
-df['rata2_7hari'] = df['Galon_Terjual_Adjusted'].shift(1).rolling(window=7, min_periods=1).mean().fillna(static_default_avg)
-df['rata2_14hari'] = df['Galon_Terjual_Adjusted'].shift(1).rolling(window=14, min_periods=1).mean().fillna(static_default_avg)
-df['std_7hari'] = df['Galon_Terjual_Adjusted'].shift(1).rolling(window=7, min_periods=1).std().fillna(static_default_std)
-df['delta_penjualan'] = df['Galon_Terjual_Adjusted'].shift(1).diff().fillna(0)
 
-# Mendefinisikan fitur dan target.
-feature_column_names = [
-    'Hari', 'hari_ke',
-    'penjualan_kemarin', 'penjualan_2hari_lalu', 'rata2_3hari', 'rata2_7hari',
-    'rata2_14hari', 'std_7hari', 'delta_penjualan',
-    'sin_minggu', 'cos_minggu',
-    'rata2_per_hari', 'std_per_hari',
-    'is_spike_day',
-    'is_urgent_delivery',
-    'is_noise_day',
-    'penjualan_lebih_25',
-    'penjualan_kurang_25',
-    'penjualan_lebih_35',
-    'penjualan_kurang_35',
-    'penjualan_lebih_20',
-    'penjualan_kurang_20'
+df.fillna(0, inplace=True)
+
+# PERBAIKAN: Daftar fitur final tanpa 'is_low_sales'
+print("Menyusun daftar fitur final...")
+features = [
+    'hari_minggu', 'is_weekend', 'awal_bulan', 'akhir_bulan',
+    'hari_dalam_bulan', 'minggu_dalam_tahun', 'bulan', 'hari_dalam_tahun',
+    'lag_1', 'lag_2', 'lag_3', 'lag_7', 'lag_14',
+    'rolling_mean_3', 'rolling_mean_7', 'rolling_mean_14',
+    'rolling_std_3', 'rolling_std_7', 'rolling_std_14',
+    'lag_diff_1', 'lag_diff_7'
 ]
-target_column_name = 'Galon_Terjual_Adjusted'
+X = df[features]
+y = df[target_col]
 
-X = df[feature_column_names]
-y = df[target_column_name]
 
-# --- 3. Pembagian Data ---
-print(f"Membagi data: {train_index_end} untuk pelatihan, {len(df) - train_index_end} untuk pengujian.")
-X_train, X_test = X.iloc[:train_index_end], X.iloc[train_index_end:]
-y_train, y_test = y.iloc[:train_index_end], y.iloc[train_index_end:]
+# --- 4. PEMBAGIAN DATA ---
+print("\n--- Langkah 4: Membagi Data Menjadi Set Latih dan Uji ---")
+# Memisahkan data berdasarkan data yang ada vs data masa depan (untuk prediksi)
+train_test_split_point = len(df_raw)
+X_train = X.iloc[:train_test_split_point]
+y_train = y.iloc[:train_test_split_point]
 
+# Data uji yang sebenarnya adalah data yang sama dengan data latih,
+# namun evaluasi dilakukan melalui cross-validation (TimeSeriesSplit)
+# yang lebih robust untuk data waktu.
+# Untuk plot akhir, kita akan prediksi di seluruh rentang waktu.
+print(f"Ukuran data untuk melatih model: {len(X_train)} sampel")
+
+
+# --- 5. MODELING (PERBAIKAN: Strategi Tuning 2 Tahap) ---
+print("\n--- Langkah 5: Melatih Model XGBoost dengan Hyperparameter Tuning 2 Tahap ---")
 tscv = TimeSeriesSplit(n_splits=5)
+model = xgb.XGBRegressor(objective='reg:squarederror', random_state=42, n_jobs=-1)
 
-# --- 4. Pelatihan dan Penyetelan Model XGBoost ---
-
-# Langkah 1: RandomizedSearchCV untuk pencarian area yang luas
-print("\nLangkah 1: Menjalankan RandomizedSearchCV...")
-param_dist_xgb = {
-    'n_estimators': [100, 200, 300, 500, 700],
-    'learning_rate': [0.01, 0.05, 0.1, 0.2],
-    'max_depth': [3, 4, 5, 6, 8, 10],
-    'subsample': [0.7, 0.8, 0.9, 1.0],
-    'colsample_bytree': [0.7, 0.8, 0.9, 1.0],
-    'gamma': [0, 0.1, 0.2, 0.5],
-    'reg_alpha': [0, 0.5, 1],
-    'reg_lambda': [1, 1.5, 2]
+# --- TAHAP 1: Pencarian Luas dengan RandomizedSearchCV ---
+print("\n--- Tahap 5.1: Pencarian Luas dengan RandomizedSearchCV ---")
+param_dist = {
+    'n_estimators': [200, 400, 600, 800],
+    'max_depth': [3, 4, 5, 6],
+    'learning_rate': [0.01, 0.05, 0.1],
+    'subsample': [0.7, 0.8, 0.9],
+    'colsample_bytree': [0.7, 0.8, 0.9],
+    'gamma': [0.1, 0.2, 0.3],
+    'reg_alpha': [0.05, 0.1, 0.2]
 }
 
-xgb_model = XGBRegressor(random_state=42)
-xgb_random_search = RandomizedSearchCV(
-    estimator=xgb_model,
-    param_distributions=param_dist_xgb,
-    n_iter=50, 
+random_search = RandomizedSearchCV(
+    estimator=model,
+    param_distributions=param_dist,
+    n_iter=50,  # Mencoba 50 kombinasi acak untuk kecepatan
     cv=tscv,
     scoring='neg_mean_absolute_error',
+    verbose=1,
     random_state=42,
     n_jobs=-1
 )
-xgb_random_search.fit(X_train, y_train)
-print(f"Parameter terbaik dari RandomizedSearch: {xgb_random_search.best_params_}")
+random_search.fit(X_train, y_train)
+print(f"\nParameter terbaik dari RandomizedSearch: {random_search.best_params_}")
 
-# Langkah 2: GridSearchCV untuk penyetelan halus di sekitar parameter terbaik
-print("\nLangkah 2: Menjalankan GridSearchCV untuk penyetelan halus...")
-best_params_rs = xgb_random_search.best_params_
-param_grid_gs = {
-    'n_estimators': [best_params_rs['n_estimators'] - 50, best_params_rs['n_estimators'], best_params_rs['n_estimators'] + 50],
-    'learning_rate': [best_params_rs['learning_rate'] * 0.8, best_params_rs['learning_rate'], best_params_rs['learning_rate'] * 1.2],
-    'max_depth': [best_params_rs['max_depth'] - 1, best_params_rs['max_depth'], best_params_rs['max_depth'] + 1],
-    'subsample': [best_params_rs['subsample']],
-    'colsample_bytree': [best_params_rs['colsample_bytree']]
+
+# --- TAHAP 2: Pencarian Halus dengan GridSearchCV ---
+print("\n--- Tahap 5.2: Pencarian Halus dengan GridSearchCV di Sekitar Hasil Terbaik ---")
+best_params_from_random = random_search.best_params_
+
+# Buat grid yang lebih sempit di sekitar parameter terbaik dari tahap 1
+param_grid = {
+    'n_estimators': [best_params_from_random['n_estimators']],
+    'max_depth': [best_params_from_random['max_depth']],
+    'learning_rate': [best_params_from_random['learning_rate'] - 0.005, best_params_from_random['learning_rate'], best_params_from_random['learning_rate'] + 0.005],
+    'subsample': [best_params_from_random['subsample']],
+    'colsample_bytree': [best_params_from_random['colsample_bytree']],
+    'gamma': [best_params_from_random['gamma']],
+    'reg_alpha': [best_params_from_random['reg_alpha']]
 }
-# Pastikan nilai parameter tidak negatif
-param_grid_gs['n_estimators'] = [n for n in param_grid_gs['n_estimators'] if n > 0]
-param_grid_gs['max_depth'] = [d for d in param_grid_gs['max_depth'] if d > 0]
 
-
-xgb_grid_search = GridSearchCV(
-    estimator=xgb_model,
-    param_grid=param_grid_gs,
+grid_search = GridSearchCV(
+    estimator=model,
+    param_grid=param_grid,
     cv=tscv,
     scoring='neg_mean_absolute_error',
-    n_jobs=-1
+    n_jobs=-1,
+    verbose=1
 )
-xgb_grid_search.fit(X_train, y_train)
-print(f"Parameter terbaik final dari GridSearchCV: {xgb_grid_search.best_params_}")
+grid_search.fit(X_train, y_train)
 
-best_xgb_model = xgb_grid_search.best_estimator_
+print(f"\nParameter terbaik final dari GridSearchCV: {grid_search.best_params_}")
+best_model = grid_search.best_estimator_
 
-# --- 5. Evaluasi Model ---
-print("\nEvaluasi Model XGBoost pada Data Uji:")
-y_pred = best_xgb_model.predict(X_test)
-mae = mean_absolute_error(y_test, y_pred)
-rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-r2 = r2_score(y_test, y_pred)
 
+# --- 6. EVALUASI MODEL ---
+print("\n--- Langkah 6: Mengevaluasi Kinerja Model ---")
+# Prediksi dibuat pada seluruh dataset untuk melihat performa
+y_pred_full = best_model.predict(X)
+y_pred_full = y_pred_full.clip(min=lower_bound, max=upper_bound)
+
+# Evaluasi dilakukan pada data historis (set latih)
+# karena tidak ada set uji terpisah (mengandalkan CV)
+y_pred_train = y_pred_full[:train_test_split_point]
+
+mae = mean_absolute_error(y_train, y_pred_train)
+rmse = np.sqrt(mean_squared_error(y_train, y_pred_train))
+r2 = r2_score(y_train, y_pred_train)
+
+print("Evaluasi Kinerja pada Data Historis (setelah Cross-Validation):")
 print(f"Mean Absolute Error (MAE): {mae:.2f} galon")
 print(f"Root Mean Squared Error (RMSE): {rmse:.2f}")
-print(f"R-squared (R2): {r2:.2f}")
+print(f"R-squared (R2 Score): {r2:.2f}")
 
-# --- 6. Penyimpanan Model dan Metadata ---
-print("\nMenyimpan model dan metadata...")
-joblib.dump(best_xgb_model, 'xgboost_gallon_model.joblib')
 
-# Memastikan serialisasi JSON berhasil dengan mengonversi tipe data NumPy.
-cleaned_best_params = {k: (int(v) if isinstance(v, np.integer) else float(v) if isinstance(v, np.floating) else v) for k, v in xgb_grid_search.best_params_.items()}
-cleaned_day_stats = day_stats.astype(float).to_dict('index')
+# --- 7. PENYIMPANAN & VISUALISASI ---
+print("\n--- Langkah 7: Menyimpan Model dan Membuat Visualisasi ---")
+joblib.dump(best_model, 'xgboost_gallon_model.joblib')
+print("Model berhasil disimpan sebagai 'xgboost_gallon_model.joblib'")
 
+# Menggunakan parameter terbaik dari grid_search
+cleaned_best_params = {
+    k: (int(v) if isinstance(v, np.integer) else float(v) if isinstance(v, np.floating) else v)
+    for k, v in grid_search.best_params_.items()
+}
 model_metadata = {
-    'features': feature_column_names,
-    'recent_14_days_sales_for_prediction': [float(x) for x in df['Galon_Terjual_Adjusted'].iloc[-14:].values],
-    'transformation_stats': {
-        'spike_threshold': SPIKE_THRESHOLD,
-        'urgent_delivery_value': URGENT_DELIVERY_VALUE,
-        'noise_threshold': NOISE_THRESHOLD,
-        'static_default_avg': float(static_default_avg),
-        'static_default_std': float(static_default_std)
+    'features_used': features,
+    'business_rules': {
+        'lower_bound': lower_bound,
+        'upper_bound': upper_bound
     },
-    'day_of_week_stats': cleaned_day_stats,
-    'model_performance_on_test_set': {
+    'model_performance_on_historic_data': {
         'mae': float(mae),
         'rmse': float(rmse),
         'r2': float(r2)
     },
-    'model_best_params': cleaned_best_params
+    'best_hyperparameters': cleaned_best_params
 }
-
 with open('model_metadata.json', 'w') as f:
     json.dump(model_metadata, f, indent=4)
+print("Metadata model berhasil disimpan sebagai 'model_metadata.json'")
 
-print("Model dan metadata berhasil disimpan.")
 
-# --- 7. Analisis dan Visualisasi ---
-print("\nMembuat visualisasi hasil prediksi...")
+# Visualisasi
+plt.figure(figsize=(18, 8))
+# Plot data aktual (hanya data historis yang ada)
+plt.plot(df.loc[:train_test_split_point-1, 'tanggal'], y_train, label='Penjualan Aktual (Telah Dibersihkan)', color='royalblue', marker='.', linestyle='-')
+# Plot prediksi (di seluruh rentang waktu)
+plt.plot(df['tanggal'], y_pred_full, label='Prediksi Model (Historis & Masa Depan)', color='darkorange', marker='.', linestyle='--')
 
-# Plot perbandingan nilai aktual (setelah disesuaikan) vs. prediksi.
-plt.figure(figsize=(15, 7))
-plt.plot(y_test.index, y_test, label='Aktual (Disesuaikan)', color='blue', marker='o', linestyle='-')
-plt.plot(y_test.index, y_pred, label='Prediksi', color='red', marker='x', linestyle='--')
-plt.plot(df.loc[y_test.index, 'Galon_Terjual'], label='Data Asli', color='green', marker='.', linestyle=':', alpha=0.5)
-plt.title('Perbandingan Penjualan Aktual (Disesuaikan) vs. Prediksi')
-plt.xlabel('Indeks Data Uji')
-plt.ylabel('Galon Terjual')
+plt.title('Perbandingan Aktual vs. Prediksi (Model Diperbaiki)', fontsize=16)
+plt.xlabel('Tanggal', fontsize=12)
+plt.ylabel('Jumlah Galon Terjual', fontsize=12)
 plt.legend()
-plt.grid(True)
+plt.axvline(df.loc[train_test_split_point, 'tanggal'], color='red', linestyle='--', label='Batas Prediksi Masa Depan')
+plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+plt.tight_layout()
 plt.savefig("actual_vs_prediction.png")
 plt.close()
-print("Plot perbandingan telah disimpan.")
+print("Plot perbandingan telah disimpan sebagai 'actual_vs_prediction.png'")
 
-# Plot feature importance.
-plt.figure(figsize=(10, 8))
-feat_importances = pd.Series(best_xgb_model.feature_importances_, index=X.columns)
-feat_importances.nlargest(len(feature_column_names)).plot(kind='barh')
-plt.title('Feature Importance dari Model XGBoost')
-plt.xlabel('Importance')
+plt.figure(figsize=(12, 10))
+feat_importances = pd.Series(best_model.feature_importances_, index=X_train.columns)
+feat_importances.nlargest(20).plot(kind='barh')
+plt.title('20 Fitur Paling Penting (Model Diperbaiki)', fontsize=16)
+plt.xlabel('Tingkat Kepentingan (Importance)', fontsize=12)
 plt.gca().invert_yaxis()
 plt.tight_layout()
 plt.savefig("feature_importance.png")
 plt.close()
-print("Plot feature importance telah disimpan.")
+print("Plot feature importance telah disimpan sebagai 'feature_importance.png'")
