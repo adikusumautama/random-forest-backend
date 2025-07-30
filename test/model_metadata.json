@@ -16,28 +16,31 @@
         "rolling_mean_3",
         "rolling_mean_7",
         "rolling_mean_14",
+        "rolling_mean_21",
         "rolling_std_3",
         "rolling_std_7",
         "rolling_std_14",
+        "rolling_std_21",
         "lag_diff_1",
-        "lag_diff_7"
+        "lag_diff_7",
+        "days_since_last_spike"
     ],
     "business_rules": {
-        "lower_bound": 25.0,
+        "lower_bound": 22.0,
         "upper_bound": 52.0
     },
     "model_performance_on_historic_data": {
-        "mae": 7.177221004168192,
-        "rmse": 8.293967512706088,
-        "r2": 0.3738941827054243
+        "mae": 2.6015499432881675,
+        "rmse": 3.8809198725154515,
+        "r2": 0.8774872173204912
     },
     "best_hyperparameters": {
-        "colsample_bytree": 0.7,
-        "gamma": 0.1,
+        "colsample_bytree": 0.9,
+        "gamma": 0.3,
         "learning_rate": 0.01,
-        "max_depth": 3,
-        "n_estimators": 400,
+        "max_depth": 4,
+        "n_estimators": 600,
         "reg_alpha": 0.1,
-        "subsample": 0.9
+        "subsample": 0.7
     }
 }

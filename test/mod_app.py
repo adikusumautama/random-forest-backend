@@ -1,4 +1,4 @@
-# mod_app.py - Disesuaikan untuk model dengan rekayasa fitur tingkat lanjut
+# mod_app.py - Disesuaikan untuk model final dengan fitur siklus lonjakan
 
 from flask import Flask, request, jsonify
 import joblib, json, pandas as pd, numpy as np
@@ -7,7 +7,7 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 import warnings, traceback
 
-warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore")
 
 app = Flask(__name__)
 
@@ -25,166 +25,146 @@ except Exception as e:
 
 # --- Memuat Model & Metadata ---
 try:
-    model = joblib.load("xgboost_gallon_model.joblib")
-    with open("model_metadata.json", "r") as f:
+    MODEL_PATH = "xgboost_gallon_model.joblib"
+    METADATA_PATH = "model_metadata.json"
+    
+    model = joblib.load(MODEL_PATH)
+    with open(METADATA_PATH, "r") as f:
         metadata = json.load(f)
     
-    # Mengambil semua informasi yang diperlukan dari metadata
-    FEATURES = metadata["features"]
-    TRANSFORMATION_STATS = metadata.get("transformation_stats", {})
-    DAY_OF_WEEK_STATS = metadata.get("day_of_week_stats", {})
-    print("* Model XGBoost dan metadata berhasil dimuat.")
+    # Mengambil semua informasi yang diperlukan dari metadata baru
+    FEATURES = metadata["features_used"]
+    BUSINESS_RULES = metadata["business_rules"]
+    LOWER_BOUND = BUSINESS_RULES['lower_bound']
+    UPPER_BOUND = BUSINESS_RULES['upper_bound']
+    
+    print(f"* Model '{MODEL_PATH}' dan metadata berhasil dimuat.")
 except Exception as e:
-    model, FEATURES, TRANSFORMATION_STATS, DAY_OF_WEEK_STATS = None, [], {}, {}
+    model, FEATURES, BUSINESS_RULES, LOWER_BOUND, UPPER_BOUND = None, [], {}, 0, 0
     print(f"* Gagal memuat model atau metadata: {e}")
 
-def get_sales_history():
-    """Mengambil data historis dari Firestore dan menambahkan kolom 'Hari' dan 'hari_ke'."""
+def get_sales_history_from_firestore():
+    """
+    Mengambil data historis dari Firestore, mengurutkan berdasarkan tanggal,
+    dan mengembalikannya sebagai DataFrame yang diindeks oleh tanggal.
+    """
     if db is None:
         raise Exception("Firestore belum terhubung.")
     
-    parsed = []
-    query = db.collection("daily_sales").order_by("__name__")
+    sales_data = []
+    query = db.collection("daily_sales").stream()
     
-    for doc in query.stream():
-        d = doc.to_dict()
+    for doc in query:
         try:
-            tgl = pd.to_datetime(doc.id, format="%Y-%m-%d")
-            qty = float(d.get("quantity", np.nan))
-            
-            # Menambahkan 'Hari' (1=Senin, 7=Minggu) dan 'hari_ke'
-            parsed.append({
-                "Tanggal": tgl, 
-                "Galon Terjual": qty, 
-                "Hari": tgl.isoweekday() 
-            })
+            # Kunci dokumen adalah tanggal dalam format YYYY-MM-DD
+            sale_date = pd.to_datetime(doc.id, format="%Y-%m-%d")
+            data = doc.to_dict()
+            quantity = float(data.get("quantity", np.nan))
+            sales_data.append({"tanggal": sale_date, "Galon_Terjual": quantity})
         except (ValueError, TypeError):
             print(f"* WARNING: Dokumen {doc.id} dilewati karena format tidak valid.")
     
-    if not parsed:
-        return pd.DataFrame(columns=["Tanggal", "Galon Terjual", "Hari", "hari_ke"])
+    if not sales_data:
+        return pd.DataFrame(columns=["tanggal", "Galon_Terjual"]).set_index('tanggal')
         
-    df = pd.DataFrame(parsed)
-    df['hari_ke'] = range(1, len(df) + 1)
+    df = pd.DataFrame(sales_data).sort_values(by="tanggal").set_index('tanggal')
     return df
 
-def build_features(df_hist, target_hari_ke, target_date, stats, day_stats_map):
+def build_features_for_prediction(historical_df, target_date):
     """
-    Membangun fitur untuk prediksi, mereplikasi proses dari skrip pelatihan.
+    Membangun fitur untuk satu tanggal target, menggunakan data historis sebagai konteks.
+    Logika ini HARUS MEREPLIKASI mod_train_model.py dengan TEPAT.
     """
-    # Salin data historis untuk menghindari modifikasi data asli
-    df = df_hist.copy()
-    
-    # Ambil nilai ambang batas dari metadata
-    NOISE_THRESHOLD = stats.get('noise_threshold', 10)
-    SPIKE_THRESHOLD = stats.get('spike_threshold', 50)
-    URGENT_DELIVERY_VALUE = stats.get('urgent_delivery_value', 40)
-    
-    # --- Terapkan Aturan Bisnis yang Sama Seperti Saat Pelatihan ---
-    df['Galon_Terjual_Adjusted'] = df['Galon Terjual'].copy()
-    df.loc[df['Galon Terjual'] < NOISE_THRESHOLD, 'Galon_Terjual_Adjusted'] = 0
-    
-    for index, row in df.iterrows():
-        if row['Galon Terjual'] > SPIKE_THRESHOLD:
-            excess = row['Galon Terjual'] - SPIKE_THRESHOLD
-            df.at[index, 'Galon_Terjual_Adjusted'] = SPIKE_THRESHOLD
-            prev_day_index = index - 1
-            while excess > 0 and prev_day_index >= 0:
-                fill_amount = SPIKE_THRESHOLD - df.at[prev_day_index, 'Galon_Terjual_Adjusted']
-                if fill_amount > 0:
-                    add_amount = min(excess, fill_amount)
-                    df.at[prev_day_index, 'Galon_Terjual_Adjusted'] += add_amount
-                    excess -= add_amount
-                prev_day_index -= 1
-
     # Buat baris baru untuk hari yang akan diprediksi
-    new_row_dict = {
-        "Tanggal": target_date, 
-        "Galon Terjual": np.nan, 
-        "Hari": target_date.isoweekday(), 
-        "hari_ke": target_hari_ke
-    }
-    new_row = pd.DataFrame([new_row_dict])
-    df = pd.concat([df, new_row], ignore_index=True)
-
-    # --- Buat Fitur Berdasarkan Data Asli dan Data yang Disesuaikan ---
-    df['is_noise_day'] = (df['Galon Terjual'] < NOISE_THRESHOLD).astype(int)
-    df['is_spike_day'] = (df['Galon Terjual'] > SPIKE_THRESHOLD).astype(int)
-    df['is_urgent_delivery'] = (df['Galon Terjual'] == URGENT_DELIVERY_VALUE).astype(int)
+    new_row = pd.DataFrame([{'Galon_Terjual': np.nan}], index=[target_date])
     
-    df['penjualan_lebih_25'] = (df['Galon_Terjual_Adjusted'] > 25).astype(int)
-    df['penjualan_kurang_25'] = (df['Galon_Terjual_Adjusted'] < 25).astype(int)
-    df['penjualan_lebih_35'] = (df['Galon_Terjual_Adjusted'] > 35).astype(int)
-    df['penjualan_kurang_35'] = (df['Galon_Terjual_Adjusted'] < 35).astype(int)
-    df['penjualan_lebih_20'] = (df['Galon_Terjual_Adjusted'] > 20).astype(int)
-    df['penjualan_kurang_20'] = (df['Galon_Terjual_Adjusted'] < 20).astype(int)
-
-    # --- Buat Fitur Statistik dan Runtun Waktu ---
-    static_avg = stats.get('static_default_avg', df['Galon_Terjual_Adjusted'].mean())
-    static_std = stats.get('static_default_std', df['Galon_Terjual_Adjusted'].std())
-
-    df['rata2_per_hari'] = df['Hari'].astype(str).map(lambda x: day_stats_map.get(x, {}).get('mean', static_avg))
-    df['std_per_hari'] = df['Hari'].astype(str).map(lambda x: day_stats_map.get(x, {}).get('std', static_std))
+    # Gabungkan data historis dengan baris baru untuk prediksi
+    df = pd.concat([historical_df, new_row])
     
-    df['sin_minggu'] = np.sin(2 * np.pi * df['Hari'] / 7)
-    df['cos_minggu'] = np.cos(2 * np.pi * df['Hari'] / 7)
+    # --- 1. Pembersihan Data (sama seperti training) ---
+    df['Galon_Terjual_Filled'] = df['Galon_Terjual'].fillna(method='ffill')
+    df['Galon_Terjual_Filled'].fillna(LOWER_BOUND, inplace=True)
+    df['Galon_Terjual_Cleaned'] = df['Galon_Terjual_Filled'].clip(lower=LOWER_BOUND, upper=UPPER_BOUND)
     
-    df['penjualan_kemarin'] = df['Galon_Terjual_Adjusted'].shift(1).fillna(static_avg)
-    df['penjualan_2hari_lalu'] = df['Galon_Terjual_Adjusted'].shift(2).fillna(static_avg)
-    df['rata2_3hari'] = df['Galon_Terjual_Adjusted'].shift(1).rolling(3, min_periods=1).mean().fillna(static_avg)
-    df['rata2_7hari'] = df['Galon_Terjual_Adjusted'].shift(1).rolling(7, min_periods=1).mean().fillna(static_avg)
-    df['rata2_14hari'] = df['Galon_Terjual_Adjusted'].shift(1).rolling(14, min_periods=1).mean().fillna(static_avg)
-    df['std_7hari'] = df['Galon_Terjual_Adjusted'].shift(1).rolling(7, min_periods=1).std().fillna(static_std)
-    df['delta_penjualan'] = df['Galon_Terjual_Adjusted'].shift(1).diff().fillna(0)
+    target_col = 'Galon_Terjual_Cleaned'
+    
+    # --- 2. Rekayasa Fitur (sama seperti training) ---
+    shifted_target = df[target_col].shift(1)
+    for lag in [1, 2, 3, 7, 14]:
+        df[f'lag_{lag}'] = shifted_target.shift(lag)
+    for window in [3, 7, 14, 21]:
+        df[f'rolling_mean_{window}'] = shifted_target.rolling(window=window).mean()
+        df[f'rolling_std_{window}'] = shifted_target.rolling(window=window).std()
+
+    df['lag_diff_1'] = shifted_target.diff(1)
+    df['lag_diff_7'] = shifted_target.diff(7)
+    df['hari_dalam_bulan'] = df.index.day
+    df['hari_dalam_tahun'] = df.index.dayofyear
+    df['minggu_dalam_tahun'] = df.index.isocalendar().week.astype(int)
+    df['bulan'] = df.index.month
+    df['hari_minggu'] = df.index.dayofweek
+    df['is_weekend'] = (df['hari_minggu'] >= 5).astype(int)
+    df['awal_bulan'] = df.index.is_month_start.astype(int)
+    df['akhir_bulan'] = df.index.is_month_end.astype(int)
+
+    # Fitur Siklus Lonjakan (sama seperti training)
+    spike_threshold = 49
+    df['is_spike'] = (df[target_col] > spike_threshold).astype(int)
+    spike_days = df['is_spike'].copy()
+    spike_days[spike_days == 0] = np.nan
+    spike_days = spike_days.reset_index()
+    spike_days['day_num'] = range(len(spike_days))
+    spike_days.set_index('tanggal', inplace=True)
+    spike_days['day_num'] = spike_days['day_num'] * spike_days['is_spike']
+    spike_days['day_num'].fillna(method='ffill', inplace=True)
+    df['days_since_last_spike'] = (range(len(df)) - spike_days['day_num']).fillna(0)
+    
+    df.fillna(0, inplace=True)
     
     # Ambil baris terakhir yang berisi fitur untuk hari prediksi
-    row = df[df["hari_ke"] == target_hari_ke]
-    if row.empty:
-        raise Exception("Baris prediksi tidak dapat dibuat.")
-    return row[FEATURES]
+    # Pastikan urutan kolomnya sama persis dengan saat training
+    return df.tail(1)[FEATURES]
 
 
 @app.route("/predict", methods=["POST"])
 def predict():
-    if None in (model, TRANSFORMATION_STATS):
+    if model is None or not FEATURES:
         return jsonify({"error": "Model atau metadata belum siap."}), 500
     try:
-        df_hist = get_sales_history()
+        # 1. Ambil seluruh riwayat penjualan dari Firestore
+        df_hist = get_sales_history_from_firestore()
         if df_hist.empty:
             return jsonify({"error": "Tidak ada data historis di Firestore."}), 400
         
-        last_row = df_hist.iloc[-1]
-        last_date = last_row['Tanggal']
-        last_hari_ke = last_row['hari_ke']
-
+        # 2. Tentukan tanggal yang akan diprediksi (H+1 dari data terakhir)
+        last_date = df_hist.index.max()
         target_date = last_date + timedelta(days=1)
-        target_hari_ke = last_hari_ke + 1
 
-        feature_df = build_features(df_hist, target_hari_ke, target_date, TRANSFORMATION_STATS, DAY_OF_WEEK_STATS)
+        # 3. Bangun fitur untuk tanggal target menggunakan seluruh riwayat
+        feature_df = build_features_for_prediction(df_hist, target_date)
+        
+        # 4. Lakukan prediksi
         raw_pred = model.predict(feature_df)[0]
 
-        # Logika bisnis pasca-prediksi (dipertahankan sesuai permintaan)
-        min_ratio = 0.60
-        min_allowed = df_hist["Galon Terjual"].iloc[-1] * min_ratio
-        final_pred = max(0, round(max(raw_pred, min_allowed), 2))
+        # 5. Bulatkan dan pastikan hasil sesuai aturan bisnis (clipping)
+        final_pred = round(float(raw_pred), 2)
         
         # --- Blok Logging untuk Debugging ---
         print("\n==============================")
         print(f"Prediksi Tanggal: {target_date.strftime('%A, %d %B %Y')}")
-        print(f"(Prediksi untuk hari_ke: {target_hari_ke})")
         print("\nFitur Input Model:")
         if not feature_df.empty:
-            for col in feature_df.columns:
-                print(f"  - {col:25s}: {feature_df.iloc[0][col]:.4f}")
+            for col, val in feature_df.iloc[0].items():
+                print(f"  - {col:25s}: {val:.4f}")
         print(f"\nPrediksi Mentah dari Model: {raw_pred:.2f}")
-        print(f"Prediksi Akhir (setelah penyesuaian): {final_pred:.2f} galon")
+        print(f"Prediksi Akhir (setelah pembulatan): {final_pred:.2f} galon")
         print("==============================")
         
         return jsonify({
             "last_known_data_date": last_date.strftime("%Y-%m-%d"),
             "prediction_for_next_day": {
                 "Tanggal": target_date.strftime("%Y-%m-%d"),
-                "Prediksi Galon": float(final_pred)
+                "Prediksi Galon": final_pred
             }
         })
 
