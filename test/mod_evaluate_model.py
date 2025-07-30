@@ -139,7 +139,9 @@ print("\n--- HASIL EVALUASI MODEL PADA DATA UJI ---")
 mae = mean_absolute_error(y_actual, y_pred)
 rmse = np.sqrt(mean_squared_error(y_actual, y_pred))
 r2 = r2_score(y_actual, y_pred)
-
+# Tambahkan metrik MAPE
+mape = np.mean(np.abs((y_actual - y_pred) / y_actual)) * 100
+print(f"Mean Absolute Percentage Error (MAPE): {mape:.2f}%")
 print(f"Mean Absolute Error (MAE): {mae:.2f} galon")
 print(f"Root Mean Squared Error (RMSE): {rmse:.2f}")
 print(f"R-squared (R2): {r2:.2f}")

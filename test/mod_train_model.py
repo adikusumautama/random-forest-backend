@@ -158,11 +158,14 @@ print("\n--- Langkah 6: Mengevaluasi Kinerja Model ---")
 y_pred_full = best_model.predict(X)
 y_pred_full = y_pred_full.clip(min=lower_bound, max=upper_bound)
 y_pred_train = y_pred_full[:train_test_split_point]
+# MAPE
+mape = np.mean(np.abs((y_train - y_pred_train) / y_train)) * 100
 mae = mean_absolute_error(y_train, y_pred_train)
 rmse = np.sqrt(mean_squared_error(y_train, y_pred_train))
 r2 = r2_score(y_train, y_pred_train)
 print("Evaluasi Kinerja pada Data Historis (setelah Cross-Validation):")
 print(f"Mean Absolute Error (MAE): {mae:.2f} galon")
+print(f"Mean Absolute Percentage Error (MAPE): {mape:.2f}%")
 print(f"Root Mean Squared Error (RMSE): {rmse:.2f}")
 print(f"R-squared (R2 Score): {r2:.2f}")
 
