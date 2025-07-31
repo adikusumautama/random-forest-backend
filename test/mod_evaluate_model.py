@@ -1,3 +1,10 @@
+# =============================================================================
+# PROYEK PREDIKSI PENJUALAN GALON
+# Script: mod_evaluate_model.py
+# Deskripsi: Script ini mengevaluasi kinerja model yang sudah dilatih
+#            pada data uji yang baru (unseen data).
+# =============================================================================
+
 import pandas as pd
 import numpy as np
 import joblib
@@ -9,13 +16,13 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # --- KONFIGURASI ---
-INPUT_CSV_LATIH = "galon.csv" # File data latih asli untuk konteks
-INPUT_CSV_UJI = "mod_data_uji.csv"
+INPUT_CSV_LATIH = "galon.csv" # Diperlukan untuk menyediakan konteks historis
+INPUT_CSV_UJI = "mod_data_uji.csv" # Data baru yang akan dievaluasi
 OUTPUT_CSV_HASIL = "hasil_evaluasi_final.csv"
 OUTPUT_PLOT_HASIL = "plot_evaluasi_final.png"
 MODEL_PATH = "xgboost_gallon_model.joblib"
 METADATA_PATH = "model_metadata.json"
-KONTEKS_HARI = 30 # Jumlah hari dari data latih yang akan digunakan sebagai konteks
+KONTEKS_HARI = 30 # Jumlah hari dari data latih yang akan digunakan sebagai konteks historis
 
 # --- 1. Memuat Model dan Metadata ---
 print(f"Memuat model dari {MODEL_PATH} dan metadata dari {METADATA_PATH}...")
@@ -32,7 +39,7 @@ business_rules = metadata['business_rules']
 lower_bound = business_rules['lower_bound']
 upper_bound = business_rules['upper_bound']
 
-# --- 2. Memuat dan Menyiapkan Data dengan Tanggal yang Benar ---
+# --- 2. Memuat dan Menyiapkan Data dengan Konteks ---
 print(f"Memuat data latih dari {INPUT_CSV_LATIH} untuk konteks...")
 try:
     df_train_raw = pd.read_csv(INPUT_CSV_LATIH)
@@ -46,13 +53,13 @@ except FileNotFoundError as e:
     exit()
 
 # Buat dataframe latih lengkap dengan tanggal untuk mengambil konteks
-start_date_train = '2022-07-04'
+start_date_train = '2022-06-04'
 df_train_full = pd.DataFrame()
 df_train_full['tanggal'] = pd.to_datetime(pd.date_range(start=start_date_train, periods=len(df_train_raw)))
 df_train_full['Galon_Terjual'] = df_train_raw['Galon_Terjual'].values
 
 # Gunakan tanggal mulai spesifik untuk data uji
-start_date_test = '2025-07-02'
+start_date_test = '2025-07-02' # Sesuaikan jika tanggal mulai data uji Anda berbeda
 print(f"Tanggal mulai spesifik untuk data uji telah ditetapkan: {start_date_test}")
 df_test_full = pd.DataFrame()
 df_test_full['tanggal'] = pd.to_datetime(pd.date_range(start=start_date_test, periods=len(df_test_raw)))
@@ -62,21 +69,21 @@ df_test_full['Galon_Terjual'] = df_test_raw['Galon_Terjual'].values
 df_konteks = df_train_full.tail(KONTEKS_HARI).copy()
 
 # Gabungkan data konteks dengan data uji
-df_combined = pd.concat([df_konteks, df_test_full], ignore_index=True)
+df_combined = pd.concat([df_konteks, df_test_full], ignore_index=False)
 
 
 # --- 3. Pembersihan dan Rekayasa Fitur pada Data Gabungan ---
 print("Melakukan pembersihan dan rekayasa fitur pada data gabungan...")
 df_combined.set_index('tanggal', inplace=True)
 
-df_combined['Galon_Terjual_Filled'] = df_combined['Galon_Terjual'].fillna(method='ffill')
-df_combined['Galon_Terjual_Filled'].fillna(lower_bound, inplace=True)
-df_combined['Galon_Terjual_Cleaned'] = df_combined['Galon_Terjual_Filled'].clip(lower=lower_bound, upper=upper_bound)
+df_combined['Galon_Terjual_Cleaned'] = df_combined['Galon_Terjual'].clip(lower=lower_bound, upper=upper_bound)
+df_combined['Galon_Terjual_Cleaned'].fillna(method='ffill', inplace=True)
+df_combined['Galon_Terjual_Cleaned'].fillna(lower_bound, inplace=True)
 
 target_col = 'Galon_Terjual_Cleaned'
 shifted_target = df_combined[target_col].shift(1)
 
-# Fitur lag, rolling, dan kalender (sama seperti saat training)
+# Membuat semua fitur yang sama persis seperti saat pelatihan
 for lag in [1, 2, 3, 7, 14]:
     df_combined[f'lag_{lag}'] = shifted_target.shift(lag)
 for window in [3, 7, 14, 21]:
@@ -93,11 +100,9 @@ df_combined['is_weekend'] = (df_combined['hari_minggu'] >= 5).astype(int)
 df_combined['awal_bulan'] = df_combined.index.is_month_start.astype(int)
 df_combined['akhir_bulan'] = df_combined.index.is_month_end.astype(int)
 
-# PENYESUAIAN: Tambahkan logika fitur siklus lonjakan yang sama persis
-print("Membuat fitur siklus lonjakan penjualan pada data gabungan...")
+# Fitur Siklus Lonjakan
 spike_threshold = 49
 df_combined['is_spike'] = (df_combined[target_col] > spike_threshold).astype(int)
-
 spike_days = df_combined['is_spike'].copy()
 spike_days[spike_days == 0] = np.nan
 spike_days = spike_days.reset_index()
@@ -106,6 +111,20 @@ spike_days.set_index('tanggal', inplace=True)
 spike_days['day_num'] = spike_days['day_num'] * spike_days['is_spike']
 spike_days['day_num'].fillna(method='ffill', inplace=True)
 df_combined['days_since_last_spike'] = (range(len(df_combined)) - spike_days['day_num']).fillna(0)
+
+# PENYESUAIAN: Fitur Siklus Penjualan Rendah
+print("* Menambahkan fitur siklus penjualan rendah...")
+low_threshold = 23
+df_combined['is_low_sale'] = (df_combined[target_col] < low_threshold).astype(int)
+low_sale_days = df_combined['is_low_sale'].copy()
+low_sale_days[low_sale_days == 0] = np.nan
+low_sale_days = low_sale_days.reset_index()
+low_sale_days['day_num'] = range(len(low_sale_days))
+low_sale_days.set_index('tanggal', inplace=True)
+low_sale_days['day_num'] = low_sale_days['day_num'] * low_sale_days['is_low_sale']
+low_sale_days['day_num'].fillna(method='ffill', inplace=True)
+df_combined['days_since_last_low'] = (range(len(df_combined)) - low_sale_days['day_num']).fillna(0)
+
 
 df_combined.reset_index(inplace=True)
 df_combined.fillna(0, inplace=True)
@@ -136,15 +155,16 @@ df_result.to_csv(OUTPUT_CSV_HASIL, index=False)
 
 # --- 6. Evaluasi Metrik ---
 print("\n--- HASIL EVALUASI MODEL PADA DATA UJI ---")
+epsilon = 1e-8
+mape = np.mean(np.abs((y_actual - y_pred) / (y_actual + epsilon))) * 100
 mae = mean_absolute_error(y_actual, y_pred)
 rmse = np.sqrt(mean_squared_error(y_actual, y_pred))
 r2 = r2_score(y_actual, y_pred)
-# Tambahkan metrik MAPE
-mape = np.mean(np.abs((y_actual - y_pred) / y_actual)) * 100
-print(f"Mean Absolute Percentage Error (MAPE): {mape:.2f}%")
-print(f"Mean Absolute Error (MAE): {mae:.2f} galon")
-print(f"Root Mean Squared Error (RMSE): {rmse:.2f}")
-print(f"R-squared (R2): {r2:.2f}")
+
+print(f"  - Mean Absolute Error (MAE)       : {mae:.2f} galon")
+print(f"  - Mean Absolute Percentage Error (MAPE): {mape:.2f}%")
+print(f"  - Root Mean Squared Error (RMSE)    : {rmse:.2f}")
+print(f"  - R-squared (R2 Score)            : {r2:.2f}")
 print("-----------------------------------------")
 
 

@@ -23,24 +23,26 @@
         "rolling_std_21",
         "lag_diff_1",
         "lag_diff_7",
-        "days_since_last_spike"
+        "days_since_last_spike",
+        "days_since_last_low"
     ],
     "business_rules": {
         "lower_bound": 22.0,
         "upper_bound": 52.0
     },
-    "model_performance_on_historic_data": {
-        "mae": 2.6015499432881675,
-        "rmse": 3.8809198725154515,
-        "r2": 0.8774872173204912
+    "model_performance_on_test_set": {
+        "mae": 3.222132921218872,
+        "rmse": 4.761325785543769,
+        "r2": 0.815504789352417,
+        "mape": 9.759331354964267
     },
     "best_hyperparameters": {
-        "colsample_bytree": 0.9,
-        "gamma": 0.3,
+        "colsample_bytree": 0.7,
+        "gamma": 0.2,
         "learning_rate": 0.01,
-        "max_depth": 4,
+        "max_depth": 3,
         "n_estimators": 600,
-        "reg_alpha": 0.1,
-        "subsample": 0.7
+        "reg_alpha": 0.2,
+        "subsample": 0.8
     }
 }

@@ -1,4 +1,9 @@
-# mod_app.py - Disesuaikan untuk model final dengan fitur siklus lonjakan
+# =============================================================================
+# PROYEK PREDIKSI PENJUALAN GALON - BACKEND API
+# Script: mod_app.py
+# Deskripsi: Flask API untuk memberikan prediksi penjualan galon untuk
+#            hari berikutnya berdasarkan data historis dari Firestore.
+# =============================================================================
 
 from flask import Flask, request, jsonify
 import joblib, json, pandas as pd, numpy as np
@@ -32,7 +37,7 @@ try:
     with open(METADATA_PATH, "r") as f:
         metadata = json.load(f)
     
-    # Mengambil semua informasi yang diperlukan dari metadata baru
+    # Mengambil semua informasi yang diperlukan dari metadata
     FEATURES = metadata["features_used"]
     BUSINESS_RULES = metadata["business_rules"]
     LOWER_BOUND = BUSINESS_RULES['lower_bound']
@@ -56,7 +61,6 @@ def get_sales_history_from_firestore():
     
     for doc in query:
         try:
-            # Kunci dokumen adalah tanggal dalam format YYYY-MM-DD
             sale_date = pd.to_datetime(doc.id, format="%Y-%m-%d")
             data = doc.to_dict()
             quantity = float(data.get("quantity", np.nan))
@@ -75,20 +79,17 @@ def build_features_for_prediction(historical_df, target_date):
     Membangun fitur untuk satu tanggal target, menggunakan data historis sebagai konteks.
     Logika ini HARUS MEREPLIKASI mod_train_model.py dengan TEPAT.
     """
-    # Buat baris baru untuk hari yang akan diprediksi
     new_row = pd.DataFrame([{'Galon_Terjual': np.nan}], index=[target_date])
-    
-    # Gabungkan data historis dengan baris baru untuk prediksi
     df = pd.concat([historical_df, new_row])
     
-    # --- 1. Pembersihan Data (sama seperti training) ---
-    df['Galon_Terjual_Filled'] = df['Galon_Terjual'].fillna(method='ffill')
-    df['Galon_Terjual_Filled'].fillna(LOWER_BOUND, inplace=True)
-    df['Galon_Terjual_Cleaned'] = df['Galon_Terjual_Filled'].clip(lower=LOWER_BOUND, upper=UPPER_BOUND)
+    # --- 1. Pembersihan Data ---
+    df['Galon_Terjual_Cleaned'] = df['Galon_Terjual'].clip(lower=LOWER_BOUND, upper=UPPER_BOUND)
+    df['Galon_Terjual_Cleaned'].fillna(method='ffill', inplace=True)
+    df['Galon_Terjual_Cleaned'].fillna(LOWER_BOUND, inplace=True)
     
     target_col = 'Galon_Terjual_Cleaned'
     
-    # --- 2. Rekayasa Fitur (sama seperti training) ---
+    # --- 2. Rekayasa Fitur (sama persis seperti saat training) ---
     shifted_target = df[target_col].shift(1)
     for lag in [1, 2, 3, 7, 14]:
         df[f'lag_{lag}'] = shifted_target.shift(lag)
@@ -107,7 +108,7 @@ def build_features_for_prediction(historical_df, target_date):
     df['awal_bulan'] = df.index.is_month_start.astype(int)
     df['akhir_bulan'] = df.index.is_month_end.astype(int)
 
-    # Fitur Siklus Lonjakan (sama seperti training)
+    # Fitur Siklus Lonjakan
     spike_threshold = 49
     df['is_spike'] = (df[target_col] > spike_threshold).astype(int)
     spike_days = df['is_spike'].copy()
@@ -119,10 +120,21 @@ def build_features_for_prediction(historical_df, target_date):
     spike_days['day_num'].fillna(method='ffill', inplace=True)
     df['days_since_last_spike'] = (range(len(df)) - spike_days['day_num']).fillna(0)
     
+    # PENYESUAIAN: Fitur Siklus Penjualan Rendah
+    low_threshold = 23
+    df['is_low_sale'] = (df[target_col] < low_threshold).astype(int)
+    low_sale_days = df['is_low_sale'].copy()
+    low_sale_days[low_sale_days == 0] = np.nan
+    low_sale_days = low_sale_days.reset_index()
+    low_sale_days['day_num'] = range(len(low_sale_days))
+    low_sale_days.set_index('tanggal', inplace=True)
+    low_sale_days['day_num'] = low_sale_days['day_num'] * low_sale_days['is_low_sale']
+    low_sale_days['day_num'].fillna(method='ffill', inplace=True)
+    df['days_since_last_low'] = (range(len(df)) - low_sale_days['day_num']).fillna(0)
+    
     df.fillna(0, inplace=True)
     
     # Ambil baris terakhir yang berisi fitur untuk hari prediksi
-    # Pastikan urutan kolomnya sama persis dengan saat training
     return df.tail(1)[FEATURES]
 
 
