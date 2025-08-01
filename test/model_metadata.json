@@ -27,22 +27,22 @@
         "days_since_last_low"
     ],
     "business_rules": {
-        "lower_bound": 22.0,
+        "lower_bound": 20.0,
         "upper_bound": 52.0
     },
     "model_performance_on_test_set": {
-        "mae": 3.222132921218872,
-        "rmse": 4.761325785543769,
-        "r2": 0.815504789352417,
-        "mape": 9.759331354964267
+        "mae": 3.122000646299347,
+        "rmse": 4.729527420047013,
+        "r2": 0.8143033756032838,
+        "mape": 9.352341893896606
     },
     "best_hyperparameters": {
-        "colsample_bytree": 0.7,
+        "colsample_bytree": 0.9,
         "gamma": 0.2,
-        "learning_rate": 0.01,
-        "max_depth": 3,
-        "n_estimators": 600,
+        "learning_rate": 0.005,
+        "max_depth": 6,
+        "n_estimators": 800,
         "reg_alpha": 0.2,
-        "subsample": 0.8
+        "subsample": 0.7
     }
 }

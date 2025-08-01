@@ -1,9 +1,6 @@
 # =============================================================================
 # PROYEK PREDIKSI PENJUALAN GALON
-# Script: mod_train_model.py
-# Deskripsi: Script ini melakukan seluruh proses data mining, mulai dari
-#            persiapan data hingga pelatihan model prediksi penjualan
-#            menggunakan XGBoost dan menyimpannya untuk digunakan di API.
+# Script: mod_train_model.py (Versi Final dengan Logika Fitur yang Benar)
 # =============================================================================
 
 import pandas as pd
@@ -17,67 +14,100 @@ import joblib
 import json
 import warnings
 
-# --- Konfigurasi Awal ---
 warnings.filterwarnings('ignore')
 sns.set_theme(style="whitegrid")
 
-# =============================================================================
-# TAHAP 0: KONFIGURASI UTAMA
-# =============================================================================
-# Atur persentase data yang akan digunakan sebagai set uji.
-# Berdasarkan eksperimen sebelumnya, 0.30 memberikan hasil R2 terbaik.
 TEST_SIZE_PERCENT = 0.30
+START_DATE_TRAIN = '2022-07-04'
 
-# =============================================================================
-# TAHAP 1: PERSIAPAN DATA (DATA PREPARATION)
-# =============================================================================
 print("--- TAHAP 1: PERSIAPAN DATA ---")
 try:
-    df_raw = pd.read_csv('galon.csv')
-    df_raw.columns = ['Hari_Minggu_Raw', 'Galon_Terjual']
+    df_raw = pd.read_csv('galon.csv', header=0, names=['Hari_Minggu_Raw', 'Galon_Terjual'])
     print("* Berhasil memuat data mentah dari 'galon.csv'.")
 except FileNotFoundError:
     print("Error: File 'galon.csv' tidak ditemukan.")
     exit()
 
-start_date = '2022-07-04'
-print(f"* Membuat linimasa data yang lengkap dimulai dari {start_date}...")
-df = pd.DataFrame()
-df['tanggal'] = pd.to_datetime(pd.date_range(start=start_date, periods=len(df_raw)))
-df['Galon_Terjual'] = df_raw['Galon_Terjual'].values
-print(f"* Dataset berhasil dibuat dengan {len(df)} hari.")
+print(f"* Membangun linimasa data latih yang benar, mulai dari {START_DATE_TRAIN}...")
+dates = []
+current_date = pd.to_datetime(START_DATE_TRAIN)
 
+start_day_of_week = current_date.dayofweek + 1
+first_day_in_data = df_raw['Hari_Minggu_Raw'].iloc[0]
 
-# =============================================================================
-# TAHAP 2: PEMBERSIHAN DATA (DATA CLEANING)
-# =============================================================================
+if start_day_of_week != first_day_in_data:
+    print(f"Error: Tanggal mulai {START_DATE_TRAIN} adalah hari ke-{start_day_of_week},")
+    print(f"sedangkan data latih dimulai dengan hari ke-{first_day_in_data}.")
+    exit()
+
+dates.append(current_date)
+for i in range(1, len(df_raw)):
+    day_diff = (df_raw['Hari_Minggu_Raw'].iloc[i] - df_raw['Hari_Minggu_Raw'].iloc[i-1] + 7) % 7
+    if day_diff == 0:
+        day_diff = 7
+    current_date += pd.Timedelta(days=day_diff)
+    dates.append(current_date)
+
+df = pd.DataFrame({'tanggal': dates, 'Galon_Terjual': df_raw['Galon_Terjual'].values})
+
+df.to_csv('hasil_pemetaan.csv', index=False)
+print(f"* Pemetaan tanggal ke hari selesai.")
+
 print("\n--- TAHAP 2: PEMBERSIHAN DATA ---")
-lower_bound = 22.0
+lower_bound = 20.0
 upper_bound = 52.0
-print(f"* Menerapkan Winsorization: Penjualan dibatasi antara {lower_bound} dan {upper_bound} galon.")
 df['Galon_Terjual_Cleaned'] = df['Galon_Terjual'].clip(lower=lower_bound, upper=upper_bound)
-df['Galon_Terjual_Cleaned'].fillna(method='ffill', inplace=True)
-df['Galon_Terjual_Cleaned'].fillna(lower_bound, inplace=True)
-print("* Penanganan nilai hilang dan outlier selesai.")
+# Forward Fill Method
+# df['Galon_Terjual_Cleaned'].fillna(method='ffill', inplace=True)
+# df['Galon_Terjual_Cleaned'].fillna(lower_bound, inplace=True)
 
+# Interpolate Linier Method
+df['Galon_Terjual_Cleaned'] = df['Galon_Terjual_Cleaned'].interpolate(method='linear')
+df['Galon_Terjual_Cleaned'].fillna(method='bfill', inplace=True)  # jaga-jaga kalau NaN di awal
+df['Galon_Terjual_Cleaned'].fillna(method='ffill', inplace=True)  # jaga-jaga kalau NaN di akhir
 
-# =============================================================================
-# TAHAP 3: REKAYASA FITUR (FEATURE ENGINEERING)
-# =============================================================================
+print("* Pembersihan data selesai.")
+
 print("\n--- TAHAP 3: REKAYASA FITUR ---")
 target_col = 'Galon_Terjual_Cleaned'
 df.set_index('tanggal', inplace=True)
 
-# 3.1 & 3.2 & 3.3: Fitur Waktu, Kalender, dan Momentum
-print("* Membuat fitur berbasis waktu, kalender, dan siklus...")
-shifted_target = df[target_col].shift(1)
+df = df.reindex(pd.date_range(start=df.index.min(), end=df.index.max()), method=None)
+# Forward Fill Method
+# df['Galon_Terjual'].fillna(method='ffill', inplace=True)
+# df['Galon_Terjual_Cleaned'].fillna(method='ffill', inplace=True)
+
+# Interpolate Linier Method
+df['Galon_Terjual'] = df['Galon_Terjual'].interpolate(method='linear')
+df['Galon_Terjual'].fillna(method='bfill', inplace=True)
+df['Galon_Terjual'].fillna(method='ffill', inplace=True)
+
+df['Galon_Terjual_Cleaned'] = df['Galon_Terjual_Cleaned'].interpolate(method='linear')
+df['Galon_Terjual_Cleaned'].fillna(method='bfill', inplace=True)
+df['Galon_Terjual_Cleaned'].fillna(method='ffill', inplace=True)
+
+
+# =============================================================================
+# --- PERBAIKAN KESALAHAN LOGIKA FITUR ---
+# =============================================================================
+# 1. Buat fitur lag secara langsung dari kolom target (MENGHINDARI DOUBLE SHIFT)
 for lag in [1, 2, 3, 7, 14]:
-    df[f'lag_{lag}'] = shifted_target.shift(lag)
+    df[f'lag_{lag}'] = df[target_col].shift(lag)
+
+# 2. Buat target yang digeser HANYA untuk fitur rolling & diff (mencegah data leakage)
+shifted_target = df[target_col].shift(1)
+
+# 3. Buat fitur rolling dan diff dari target yang sudah digeser
 for window in [3, 7, 14, 21]:
     df[f'rolling_mean_{window}'] = shifted_target.rolling(window=window).mean()
     df[f'rolling_std_{window}'] = shifted_target.rolling(window=window).std()
+
 df['lag_diff_1'] = shifted_target.diff(1)
 df['lag_diff_7'] = shifted_target.diff(7)
+# =============================================================================
+# --- AKHIR PERBAIKAN ---
+# =============================================================================
+
 df['hari_dalam_bulan'] = df.index.day
 df['hari_dalam_tahun'] = df.index.dayofyear
 df['minggu_dalam_tahun'] = df.index.isocalendar().week.astype(int)
@@ -87,38 +117,34 @@ df['is_weekend'] = (df['hari_minggu'] >= 5).astype(int)
 df['awal_bulan'] = df.index.is_month_start.astype(int)
 df['akhir_bulan'] = df.index.is_month_end.astype(int)
 
-# 3.4. Fitur Spesifik Domain: Siklus Lonjakan Penjualan
 spike_threshold = 49
 df['is_spike'] = (df[target_col] > spike_threshold).astype(int)
 spike_days = df['is_spike'].copy()
 spike_days[spike_days == 0] = np.nan
 spike_days = spike_days.reset_index()
+spike_days.rename(columns={'index': 'tanggal'}, inplace=True)
 spike_days['day_num'] = range(len(spike_days))
 spike_days.set_index('tanggal', inplace=True)
 spike_days['day_num'] = spike_days['day_num'] * spike_days['is_spike']
 spike_days['day_num'].fillna(method='ffill', inplace=True)
 df['days_since_last_spike'] = (range(len(df)) - spike_days['day_num']).fillna(0)
 
-# 3.5. FITUR BARU: Siklus Penjualan Rendah
-print("* Membuat fitur siklus penjualan rendah...")
-# Tentukan ambang batas untuk dianggap sebagai 'penjualan rendah'
-# Kita gunakan nilai sedikit di atas batas bawah (22)
 low_threshold = 23
 df['is_low_sale'] = (df[target_col] < low_threshold).astype(int)
 low_sale_days = df['is_low_sale'].copy()
 low_sale_days[low_sale_days == 0] = np.nan
 low_sale_days = low_sale_days.reset_index()
+low_sale_days.rename(columns={'index': 'tanggal'}, inplace=True)
 low_sale_days['day_num'] = range(len(low_sale_days))
 low_sale_days.set_index('tanggal', inplace=True)
 low_sale_days['day_num'] = low_sale_days['day_num'] * low_sale_days['is_low_sale']
 low_sale_days['day_num'].fillna(method='ffill', inplace=True)
 df['days_since_last_low'] = (range(len(df)) - low_sale_days['day_num']).fillna(0)
 
-
 df.reset_index(inplace=True)
+df.rename(columns={'index': 'tanggal'}, inplace=True)
 df.fillna(0, inplace=True)
 
-# --- Mendefinisikan Variabel Prediktor (X) dan Target (y) ---
 features = [
     'hari_minggu', 'is_weekend', 'awal_bulan', 'akhir_bulan',
     'hari_dalam_bulan', 'minggu_dalam_tahun', 'bulan', 'hari_dalam_tahun',
@@ -127,13 +153,14 @@ features = [
     'rolling_std_3', 'rolling_std_7', 'rolling_std_14', 'rolling_std_21',
     'lag_diff_1', 'lag_diff_7',
     'days_since_last_spike',
-    'days_since_last_low' # <-- FITUR BARU DITAMBAHKAN
+    'days_since_last_low'
 ]
 X = df[features]
 y = df[target_col]
 print("* Rekayasa fitur selesai.")
 
-
+# (Sisa skrip untuk splitting, training, dan saving tidak berubah)
+# ...
 # =============================================================================
 # TAHAP 4: PEMBAGIAN DATA (DATA SPLITTING)
 # =============================================================================
@@ -142,7 +169,7 @@ test_size = int(len(df) * TEST_SIZE_PERCENT)
 train_size = len(df) - test_size
 X_train, X_test = X.iloc[:train_size], X.iloc[train_size:]
 y_train, y_test = y.iloc[:train_size], y.iloc[train_size:]
-print(f"* Total data: {len(df)} hari.")
+print(f"* Total data (setelah diisi): {len(df)} hari.")
 print(f"* Data Latih: {len(X_train)} hari (~{100*(1-TEST_SIZE_PERCENT):.0f}%)")
 print(f"* Data Uji  : {len(X_test)} hari (~{100*TEST_SIZE_PERCENT:.0f}%)")
 
@@ -187,9 +214,7 @@ print("\n--- TAHAP 6: EVALUASI KINERJA MODEL ---")
 y_pred = best_model.predict(X_test)
 y_pred = y_pred.clip(min=lower_bound, max=upper_bound)
 
-# epsilon = 1e-8
-# mape = np.mean(np.abs((y_test - y_pred) / (y_test + epsilon))) * 100
-mape = np.mean(np.abs((y_test - y_pred) / y_test)) * 100
+mape = np.mean(np.abs((y_test - y_pred) / y_test.replace(0, np.nan).dropna())) * 100
 mae = mean_absolute_error(y_test, y_pred)
 rmse = np.sqrt(mean_squared_error(y_test, y_pred))
 r2 = r2_score(y_test, y_pred)
