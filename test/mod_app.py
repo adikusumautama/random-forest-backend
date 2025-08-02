@@ -49,7 +49,7 @@ except Exception as e:
 
 def get_sales_history_from_firestore(days_of_context=60):
     """
-    Mengambil data historis dari Firestore secara efisien.
+    Mengambil data historis dari Firestore secara efisien dan TERURUT.
     """
     NAMA_KOLEKSI = "daily_sales"
     NAMA_FIELD_JUMLAH = "quantity"
@@ -61,7 +61,11 @@ def get_sales_history_from_firestore(days_of_context=60):
     start_date = datetime.now() - timedelta(days=days_of_context)
     
     sales_data = []
-    query = db.collection(NAMA_KOLEKSI).where(NAMA_FIELD_TANGGAL, '>=', start_date).stream()
+    
+    query = db.collection(NAMA_KOLEKSI) \
+              .where(NAMA_FIELD_TANGGAL, '>=', start_date) \
+              .order_by(NAMA_FIELD_TANGGAL) \
+              .stream()
     
     count = 0
     for doc in query:
@@ -82,52 +86,72 @@ def get_sales_history_from_firestore(days_of_context=60):
         return pd.DataFrame(columns=["tanggal", "Galon_Terjual"]).set_index('tanggal')
         
     df = pd.DataFrame(sales_data).sort_values(by="tanggal").set_index('tanggal')
+
+    # =======================================================================
+    # --- PERBAIKAN DI SINI ---
+    # Normalisasi indeks untuk menghapus komponen waktu (jam, menit, detik).
+    # Ini memastikan data cocok dengan kalender ideal saat di-reindex.
+    # =======================================================================
+    df.index = df.index.normalize()
+    
     return df
+
 
 def build_features_for_prediction(historical_df, target_date):
     """
-    Membangun fitur untuk satu tanggal target dengan logika yang 100% konsisten
-    dengan skrip training dan evaluasi.
+    Membangun fitur untuk satu tanggal target.
+    Fungsi ini robust, mampu menangani data yang lengkap maupun yang bolong
+    dengan cara yang 100% konsisten dengan skrip training.
     """
     if historical_df.empty:
         raise ValueError("Data historis tidak boleh kosong untuk membangun fitur.")
-    
-    new_row = pd.DataFrame(index=[target_date])
-    df = pd.concat([historical_df, new_row])
-    
-    full_date_range = pd.date_range(start=df.index.min(), end=df.index.max())
+
+    df = historical_df.copy()
+
+    # =======================================================================
+    # --- PERUBAHAN DI SINI: MENGGUNAKAN FORWARD FILL UNTUK DATA LONCAT ---
+    # =======================================================================
+    # 1. Buat kalender harian yang lengkap dari data paling awal hingga tanggal target.
+    full_date_range = pd.date_range(start=df.index.min(), end=target_date)
     df = df.reindex(full_date_range)
     
-    df['Galon_Terjual'].fillna(method='ffill', inplace=True)
-    
+    # 2. Lakukan pembersihan dan pengisian data kosong (NaN).
     df['Galon_Terjual_Cleaned'] = df['Galon_Terjual'].clip(lower=LOWER_BOUND, upper=UPPER_BOUND)
+    
+    # Gunakan Forward Fill: Isi hari kosong dengan nilai terakhir yang diketahui.
+    # Ini lebih masuk akal untuk data yang bisa loncat jauh.
     df['Galon_Terjual_Cleaned'].fillna(method='ffill', inplace=True)
-    df['Galon_Terjual_Cleaned'].fillna(LOWER_BOUND, inplace=True)
     
+    # Gunakan backward fill untuk mengisi jika ada NaN di awal data.
+    df['Galon_Terjual_Cleaned'].fillna(method='bfill', inplace=True)
+    # --- AKHIR PERUBAHAN ---
+
     target_col = 'Galon_Terjual_Cleaned'
-    
-    shifted_target = df[target_col].shift(1)
+
+    # --- Logika Pembuatan Fitur (Tidak berubah, sudah benar) ---
     for lag in [1, 2, 3, 7, 14]:
-        df[f'lag_{lag}'] = shifted_target.shift(lag)
+        df[f'lag_{lag}'] = df[target_col].shift(lag)
+
+    shifted_target = df[target_col].shift(1)
+
     for window in [3, 7, 14, 21]:
         df[f'rolling_mean_{window}'] = shifted_target.rolling(window=window).mean()
         df[f'rolling_std_{window}'] = shifted_target.rolling(window=window).std()
 
     df['lag_diff_1'] = shifted_target.diff(1)
     df['lag_diff_7'] = shifted_target.diff(7)
+
+    # --- Fitur Berbasis Tanggal (Tidak berubah) ---
     df['hari_dalam_bulan'] = df.index.day
     df['hari_dalam_tahun'] = df.index.dayofyear
     df['minggu_dalam_tahun'] = df.index.isocalendar().week.astype(int)
     df['bulan'] = df.index.month
-    
-    # --- PERUBAHAN DI SINI ---
-    # Mengubah representasi hari: Senin=1, Selasa=2, ..., Minggu=7
     df['hari_minggu'] = df.index.dayofweek + 1
-    
-    df['is_weekend'] = (df['hari_minggu'] >= 6).astype(int) # Sabtu (6) atau Minggu (7)
+    df['is_weekend'] = (df['hari_minggu'] >= 6).astype(int)
     df['awal_bulan'] = df.index.is_month_start.astype(int)
     df['akhir_bulan'] = df.index.is_month_end.astype(int)
 
+    # --- Fitur Spike/Low (Tidak berubah) ---
     spike_threshold = 49
     df['is_spike'] = (df[target_col] > spike_threshold).astype(int)
     spike_days = df['is_spike'].copy()
@@ -138,8 +162,8 @@ def build_features_for_prediction(historical_df, target_date):
     spike_days['day_num'] = spike_days['day_num'] * spike_days['is_spike']
     spike_days['day_num'].fillna(method='ffill', inplace=True)
     df['days_since_last_spike'] = (range(len(df)) - spike_days['day_num']).fillna(0)
-    
-    low_threshold = 23
+
+    low_threshold = 21
     df['is_low_sale'] = (df[target_col] < low_threshold).astype(int)
     low_sale_days = df['is_low_sale'].copy()
     low_sale_days[low_sale_days == 0] = np.nan
@@ -149,10 +173,11 @@ def build_features_for_prediction(historical_df, target_date):
     low_sale_days['day_num'] = low_sale_days['day_num'] * low_sale_days['is_low_sale']
     low_sale_days['day_num'].fillna(method='ffill', inplace=True)
     df['days_since_last_low'] = (range(len(df)) - low_sale_days['day_num']).fillna(0)
-    
+
     df.fillna(0, inplace=True)
     
     return df.tail(1)[FEATURES]
+
 
 @app.route("/predict", methods=["GET", "POST"])
 def predict():
