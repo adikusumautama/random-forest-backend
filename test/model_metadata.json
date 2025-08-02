@@ -28,18 +28,18 @@
     ],
     "business_rules": {
         "lower_bound": 20.0,
-        "upper_bound": 52.0
+        "upper_bound": 53.0
     },
     "model_performance_on_test_set": {
-        "mae": 3.122000646299347,
-        "rmse": 4.729527420047013,
-        "r2": 0.8143033756032838,
-        "mape": 9.352341893896606
+        "mae": 3.57444095760817,
+        "rmse": 5.206544012146119,
+        "r2": 0.7991090109355681,
+        "mape": 11.666650986047761
     },
     "best_hyperparameters": {
         "colsample_bytree": 0.9,
         "gamma": 0.2,
-        "learning_rate": 0.005,
+        "learning_rate": 0.01,
         "max_depth": 6,
         "n_estimators": 800,
         "reg_alpha": 0.2,

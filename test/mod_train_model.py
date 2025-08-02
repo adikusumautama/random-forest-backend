@@ -17,7 +17,7 @@ import warnings
 warnings.filterwarnings('ignore')
 sns.set_theme(style="whitegrid")
 
-TEST_SIZE_PERCENT = 0.30
+TEST_SIZE_PERCENT = 0.40
 START_DATE_TRAIN = '2022-07-04'
 
 print("--- TAHAP 1: PERSIAPAN DATA ---")
@@ -55,16 +55,17 @@ print(f"* Pemetaan tanggal ke hari selesai.")
 
 print("\n--- TAHAP 2: PEMBERSIHAN DATA ---")
 lower_bound = 20.0
-upper_bound = 52.0
+upper_bound = 53.0
 df['Galon_Terjual_Cleaned'] = df['Galon_Terjual'].clip(lower=lower_bound, upper=upper_bound)
+
 # Forward Fill Method
 # df['Galon_Terjual_Cleaned'].fillna(method='ffill', inplace=True)
 # df['Galon_Terjual_Cleaned'].fillna(lower_bound, inplace=True)
 
 # Interpolate Linier Method
 df['Galon_Terjual_Cleaned'] = df['Galon_Terjual_Cleaned'].interpolate(method='linear')
-df['Galon_Terjual_Cleaned'].fillna(method='bfill', inplace=True)  # jaga-jaga kalau NaN di awal
-df['Galon_Terjual_Cleaned'].fillna(method='ffill', inplace=True)  # jaga-jaga kalau NaN di akhir
+df['Galon_Terjual_Cleaned'].fillna(method='bfill', inplace=True)  
+df['Galon_Terjual_Cleaned'].fillna(method='ffill', inplace=True)  
 
 print("* Pembersihan data selesai.")
 
@@ -73,6 +74,7 @@ target_col = 'Galon_Terjual_Cleaned'
 df.set_index('tanggal', inplace=True)
 
 df = df.reindex(pd.date_range(start=df.index.min(), end=df.index.max()), method=None)
+
 # Forward Fill Method
 # df['Galon_Terjual'].fillna(method='ffill', inplace=True)
 # df['Galon_Terjual_Cleaned'].fillna(method='ffill', inplace=True)
@@ -112,8 +114,8 @@ df['hari_dalam_bulan'] = df.index.day
 df['hari_dalam_tahun'] = df.index.dayofyear
 df['minggu_dalam_tahun'] = df.index.isocalendar().week.astype(int)
 df['bulan'] = df.index.month
-df['hari_minggu'] = df.index.dayofweek
-df['is_weekend'] = (df['hari_minggu'] >= 5).astype(int)
+df['hari_minggu'] = df.index.dayofweek + 1
+df['is_weekend'] = (df['hari_minggu'] >= 6).astype(int)
 df['awal_bulan'] = df.index.is_month_start.astype(int)
 df['akhir_bulan'] = df.index.is_month_end.astype(int)
 
@@ -129,7 +131,8 @@ spike_days['day_num'] = spike_days['day_num'] * spike_days['is_spike']
 spike_days['day_num'].fillna(method='ffill', inplace=True)
 df['days_since_last_spike'] = (range(len(df)) - spike_days['day_num']).fillna(0)
 
-low_threshold = 23
+
+low_threshold = 21
 df['is_low_sale'] = (df[target_col] < low_threshold).astype(int)
 low_sale_days = df['is_low_sale'].copy()
 low_sale_days[low_sale_days == 0] = np.nan
@@ -141,9 +144,15 @@ low_sale_days['day_num'] = low_sale_days['day_num'] * low_sale_days['is_low_sale
 low_sale_days['day_num'].fillna(method='ffill', inplace=True)
 df['days_since_last_low'] = (range(len(df)) - low_sale_days['day_num']).fillna(0)
 
+
 df.reset_index(inplace=True)
 df.rename(columns={'index': 'tanggal'}, inplace=True)
 df.fillna(0, inplace=True)
+
+# Hasil dalam CSV
+df[['tanggal', 'Galon_Terjual_Cleaned', 'is_spike', 'days_since_last_spike']].to_csv('output/csv/spike_threshold.csv', index=False)
+df[['tanggal', 'Galon_Terjual_Cleaned', 'is_low_sale', 'days_since_last_low']].to_csv('output/csv/low_threshold.csv', index=False)
+
 
 features = [
     'hari_minggu', 'is_weekend', 'awal_bulan', 'akhir_bulan',
@@ -173,12 +182,14 @@ print(f"* Total data (setelah diisi): {len(df)} hari.")
 print(f"* Data Latih: {len(X_train)} hari (~{100*(1-TEST_SIZE_PERCENT):.0f}%)")
 print(f"* Data Uji  : {len(X_test)} hari (~{100*TEST_SIZE_PERCENT:.0f}%)")
 
+df.to_csv('output/csv/fitur_lengkap.csv', index=False)
 
 # =============================================================================
 # TAHAP 5: PEMODELAN (MODELING)
 # =============================================================================
 print("\n--- TAHAP 5: PEMODELAN ---")
 tscv = TimeSeriesSplit(n_splits=5)
+
 model = xgb.XGBRegressor(objective='reg:squarederror', random_state=42, n_jobs=-1)
 
 print("* Tahap 5.1: Pencarian Luas dengan RandomizedSearchCV...")
@@ -204,6 +215,8 @@ grid_search = GridSearchCV(estimator=model, param_grid=param_grid, cv=tscv, scor
 grid_search.fit(X_train, y_train)
 best_model = grid_search.best_estimator_
 print(f"\n* Parameter terbaik final ditemukan: {grid_search.best_params_}")
+
+
 print("* Pelatihan model selesai.")
 
 
@@ -244,29 +257,33 @@ with open('model_metadata.json', 'w') as f:
     json.dump(model_metadata, f, indent=4)
 print("* Metadata model berhasil disimpan sebagai 'model_metadata.json'")
 
-# --- Visualisasi Hasil ---
-print("* Membuat visualisasi...")
+# Visualisasi hasil data uji dalam bentuk png
 plt.figure(figsize=(18, 9))
-plt.plot(df.loc[y_train.index, 'tanggal'], y_train, label='Data Latih', color='royalblue')
 plt.plot(df.loc[y_test.index, 'tanggal'], y_test, label='Data Uji (Aktual)', color='green', marker='o')
 plt.plot(df.loc[y_test.index, 'tanggal'], y_pred, label='Prediksi Model', color='darkorange', linestyle='--')
-plt.title('Perbandingan Data Latih, Uji, dan Prediksi', fontsize=16)
+plt.title('Perbandingan Data Uji dan Prediksi', fontsize=16)
 plt.xlabel('Tanggal', fontsize=12)
 plt.ylabel('Jumlah Galon Terjual', fontsize=12)
 plt.legend()
 plt.grid(True, which='both', linestyle='--', linewidth=0.5)
 plt.tight_layout()
-plt.savefig("actual_vs_prediction.png")
+plt.savefig("output/images/actual_vs_prediction.png")
 plt.close()
 
-plt.figure(figsize=(12, 10))
-feat_importances = pd.Series(best_model.feature_importances_, index=X_train.columns)
-feat_importances.nlargest(20).plot(kind='barh')
-plt.title('20 Fitur Paling Penting (Model Dilatih pada Data Latih)', fontsize=16)
-plt.xlabel('Tingkat Kepentingan (Importance)', fontsize=12)
-plt.gca().invert_yaxis()
+# Hasil data uji dalam file .csv
+y_test_df = pd.DataFrame({'tanggal': df.loc[y_test.index, 'tanggal'], 'Galon_Terjual_Actual': y_test, 'Galon_Terjual_Predicted': y_pred})
+y_test_df.to_csv('output/csv/hasil_data_uji.csv', index=False)
+
+# Fitur importance dalam bentuk png dengan nilainya
+plt.figure(figsize=(12, 8))
+xgb.plot_importance(best_model, importance_type='weight', max_num_features=20, title='Fitur Penting Model', xlabel='Jumlah Penggunaan Fitur')
 plt.tight_layout()
-plt.savefig("feature_importance.png")
+plt.savefig("output/images/feature_importance.png")
 plt.close()
-print("* Visualisasi telah disimpan.")
-print("\nProses Selesai.")
+
+# Fitur importance dalam bentuk csv
+importance_df = pd.DataFrame({
+    'feature': features,
+    'importance': best_model.feature_importances_
+}).sort_values(by='importance', ascending=False)
+importance_df.to_csv('output/images/fitur_importance.csv', index=False)
