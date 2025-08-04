@@ -17,7 +17,7 @@ import warnings
 warnings.filterwarnings('ignore')
 sns.set_theme(style="whitegrid")
 
-TEST_SIZE_PERCENT = 0.40
+TEST_SIZE_PERCENT = 0.30
 START_DATE_TRAIN = '2022-07-04'
 
 print("--- TAHAP 1: PERSIAPAN DATA ---")
@@ -230,13 +230,11 @@ y_pred = y_pred.clip(min=lower_bound, max=upper_bound)
 mape = np.mean(np.abs((y_test - y_pred) / y_test.replace(0, np.nan).dropna())) * 100
 mae = mean_absolute_error(y_test, y_pred)
 rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-r2 = r2_score(y_test, y_pred)
 
 print("Metrik Kinerja pada Data Uji:")
-print(f"  - Mean Absolute Error (MAE)       : {mae:.2f} galon")
-print(f"  - Mean Absolute Percentage Error (MAPE): {mape:.2f}%")
-print(f"  - Root Mean Squared Error (RMSE)    : {rmse:.2f}")
-print(f"  - R-squared (R2 Score)            : {r2:.2f}")
+print(f"Mean Absolute Error (MAE)       : {mae:.2f} galon")
+print(f"Mean Absolute Percentage Error (MAPE): {mape:.2f}%")
+print(f"Root Mean Squared Error (RMSE)    : {rmse:.2f}")
 
 
 # =============================================================================
@@ -250,7 +248,7 @@ cleaned_best_params = {k: (int(v) if isinstance(v, np.integer) else float(v) if 
 model_metadata = {
     'features_used': features,
     'business_rules': {'lower_bound': lower_bound, 'upper_bound': upper_bound},
-    'model_performance_on_test_set': {'mae': float(mae), 'rmse': float(rmse), 'r2': float(r2), 'mape': float(mape)},
+    'model_performance_on_test_set': {'mae': float(mae), 'rmse': float(rmse), 'mape': float(mape)},
     'best_hyperparameters': cleaned_best_params
 }
 with open('model_metadata.json', 'w') as f:

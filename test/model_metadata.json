@@ -31,15 +31,14 @@
         "upper_bound": 53.0
     },
     "model_performance_on_test_set": {
-        "mae": 3.57444095760817,
-        "rmse": 5.206544012146119,
-        "r2": 0.7991090109355681,
-        "mape": 11.666650986047761
+        "mae": 3.366631307572033,
+        "rmse": 4.977132114937775,
+        "mape": 10.423603707541806
     },
     "best_hyperparameters": {
         "colsample_bytree": 0.9,
         "gamma": 0.2,
-        "learning_rate": 0.01,
+        "learning_rate": 0.015,
         "max_depth": 6,
         "n_estimators": 800,
         "reg_alpha": 0.2,

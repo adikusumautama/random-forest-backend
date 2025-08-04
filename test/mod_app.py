@@ -32,7 +32,7 @@ except Exception as e:
 try:
     MODEL_PATH = "xgboost_gallon_model.joblib"
     METADATA_PATH = "model_metadata.json"
-    
+
     model = joblib.load(MODEL_PATH)
     with open(METADATA_PATH, "r") as f:
         metadata = json.load(f)
@@ -87,48 +87,28 @@ def get_sales_history_from_firestore(days_of_context=60):
         
     df = pd.DataFrame(sales_data).sort_values(by="tanggal").set_index('tanggal')
 
-    # =======================================================================
-    # --- PERBAIKAN DI SINI ---
-    # Normalisasi indeks untuk menghapus komponen waktu (jam, menit, detik).
-    # Ini memastikan data cocok dengan kalender ideal saat di-reindex.
-    # =======================================================================
     df.index = df.index.normalize()
     
     return df
 
-
 def build_features_for_prediction(historical_df, target_date):
-    """
-    Membangun fitur untuk satu tanggal target.
-    Fungsi ini robust, mampu menangani data yang lengkap maupun yang bolong
-    dengan cara yang 100% konsisten dengan skrip training.
-    """
+
     if historical_df.empty:
         raise ValueError("Data historis tidak boleh kosong untuk membangun fitur.")
 
     df = historical_df.copy()
 
-    # =======================================================================
-    # --- PERUBAHAN DI SINI: MENGGUNAKAN FORWARD FILL UNTUK DATA LONCAT ---
-    # =======================================================================
-    # 1. Buat kalender harian yang lengkap dari data paling awal hingga tanggal target.
     full_date_range = pd.date_range(start=df.index.min(), end=target_date)
     df = df.reindex(full_date_range)
     
-    # 2. Lakukan pembersihan dan pengisian data kosong (NaN).
     df['Galon_Terjual_Cleaned'] = df['Galon_Terjual'].clip(lower=LOWER_BOUND, upper=UPPER_BOUND)
-    
-    # Gunakan Forward Fill: Isi hari kosong dengan nilai terakhir yang diketahui.
-    # Ini lebih masuk akal untuk data yang bisa loncat jauh.
+
     df['Galon_Terjual_Cleaned'].fillna(method='ffill', inplace=True)
-    
-    # Gunakan backward fill untuk mengisi jika ada NaN di awal data.
+
     df['Galon_Terjual_Cleaned'].fillna(method='bfill', inplace=True)
-    # --- AKHIR PERUBAHAN ---
 
     target_col = 'Galon_Terjual_Cleaned'
 
-    # --- Logika Pembuatan Fitur (Tidak berubah, sudah benar) ---
     for lag in [1, 2, 3, 7, 14]:
         df[f'lag_{lag}'] = df[target_col].shift(lag)
 
@@ -179,7 +159,7 @@ def build_features_for_prediction(historical_df, target_date):
     return df.tail(1)[FEATURES]
 
 
-@app.route("/predict", methods=["GET", "POST"])
+@app.route("/predict", methods=["POST"])
 def predict():
     if model is None or not FEATURES:
         return jsonify({"error": "Model atau metadata belum siap."}), 500
@@ -192,6 +172,7 @@ def predict():
         last_date = df_hist_context.index.max()
         target_date = last_date + timedelta(days=1)
 
+        
         feature_df = build_features_for_prediction(df_hist_context, target_date)
         
         raw_pred = model.predict(feature_df)[0]
@@ -207,7 +188,7 @@ def predict():
         print(f"\nPrediksi Mentah dari Model: {raw_pred:.2f}")
         print(f"Prediksi Akhir (setelah pembulatan): {final_pred:.2f} galon")
         print("==============================")
-        
+               
         return jsonify({
             "last_known_data_date": last_date.strftime("%Y-%m-%d"),
             "prediction_for_next_day": {
