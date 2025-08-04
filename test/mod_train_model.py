@@ -1,13 +1,13 @@
 # =============================================================================
 # PROYEK PREDIKSI PENJUALAN GALON
-# Script: mod_train_model.py (Versi Final dengan Logika Fitur yang Benar)
+# Script: mod_train_model.py (Versi Disesuaikan dengan Interpolasi Outlier)
 # =============================================================================
 
 import pandas as pd
 import numpy as np
 import xgboost as xgb
 from sklearn.model_selection import TimeSeriesSplit, GridSearchCV, RandomizedSearchCV
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.metrics import mean_absolute_error, mean_squared_error
 import matplotlib.pyplot as plt
 import seaborn as sns
 import joblib
@@ -17,12 +17,20 @@ import warnings
 warnings.filterwarnings('ignore')
 sns.set_theme(style="whitegrid")
 
-TEST_SIZE_PERCENT = 0.30
+# --- KONFIGURASI ---
+TEST_SIZE_PERCENT = 0.40
 START_DATE_TRAIN = '2022-07-04'
+# Batas untuk mendefinisikan outlier
+LOWER_OUTLIER_THRESHOLD = 19
+UPPER_OUTLIER_THRESHOLD = 52
+# Batas untuk fitur 'is_low_sale' dan 'is_spike'
+LOW_SALE_FEATURE_THRESHOLD = 21
+SPIKE_FEATURE_THRESHOLD = 49
+
 
 print("--- TAHAP 1: PERSIAPAN DATA ---")
 try:
-    df_raw = pd.read_csv('galon.csv', header=0, names=['Hari_Minggu_Raw', 'Galon_Terjual'])
+    df_raw = pd.read_csv('galon.csv', header=0, names=['Hari_dalam_seminggu_Raw', 'Galon_Terjual'])
     print("* Berhasil memuat data mentah dari 'galon.csv'.")
 except FileNotFoundError:
     print("Error: File 'galon.csv' tidak ditemukan.")
@@ -33,7 +41,7 @@ dates = []
 current_date = pd.to_datetime(START_DATE_TRAIN)
 
 start_day_of_week = current_date.dayofweek + 1
-first_day_in_data = df_raw['Hari_Minggu_Raw'].iloc[0]
+first_day_in_data = df_raw['Hari_dalam_seminggu_Raw'].iloc[0]
 
 if start_day_of_week != first_day_in_data:
     print(f"Error: Tanggal mulai {START_DATE_TRAIN} adalah hari ke-{start_day_of_week},")
@@ -42,61 +50,59 @@ if start_day_of_week != first_day_in_data:
 
 dates.append(current_date)
 for i in range(1, len(df_raw)):
-    day_diff = (df_raw['Hari_Minggu_Raw'].iloc[i] - df_raw['Hari_Minggu_Raw'].iloc[i-1] + 7) % 7
+    day_diff = (df_raw['Hari_dalam_seminggu_Raw'].iloc[i] - df_raw['Hari_dalam_seminggu_Raw'].iloc[i-1] + 7) % 7
     if day_diff == 0:
         day_diff = 7
     current_date += pd.Timedelta(days=day_diff)
     dates.append(current_date)
 
 df = pd.DataFrame({'tanggal': dates, 'Galon_Terjual': df_raw['Galon_Terjual'].values})
-
 df.to_csv('hasil_pemetaan.csv', index=False)
-print(f"* Pemetaan tanggal ke hari selesai.")
+print("* Pemetaan tanggal ke hari selesai.")
 
-print("\n--- TAHAP 2: PEMBERSIHAN DATA ---")
-lower_bound = 20.0
-upper_bound = 53.0
-df['Galon_Terjual_Cleaned'] = df['Galon_Terjual'].clip(lower=lower_bound, upper=upper_bound)
 
-# Forward Fill Method
-# df['Galon_Terjual_Cleaned'].fillna(method='ffill', inplace=True)
-# df['Galon_Terjual_Cleaned'].fillna(lower_bound, inplace=True)
+print("\n--- TAHAP 2: PEMBERSIHAN DATA (METODE BARU) ---")
+# --- LOGIKA BARU: Hapus outlier dan interpolasi ---
+print("* Mengganti outlier dengan NaN untuk diinterpolasi.")
+# Salin kolom asli untuk dimodifikasi
+df['Galon_Terjual_Cleaned'] = df['Galon_Terjual'].copy().astype(float)
 
-# Interpolate Linier Method
+# Ubah nilai di atas UPPER_OUTLIER_THRESHOLD menjadi NaN
+df.loc[df['Galon_Terjual'] > UPPER_OUTLIER_THRESHOLD, 'Galon_Terjual_Cleaned'] = np.nan
+# Ubah nilai di bawah LOWER_OUTLIER_THRESHOLD menjadi NaN
+df.loc[df['Galon_Terjual'] < LOWER_OUTLIER_THRESHOLD, 'Galon_Terjual_Cleaned'] = np.nan
+
+# Hitung jumlah outlier yang dihapus
+outliers_removed = df['Galon_Terjual_Cleaned'].isna().sum()
+print(f"* Ditemukan dan ditandai {outliers_removed} outlier untuk diinterpolasi.")
+# Tampilkan hasil jumlah outlier yang dihapus dalam csv
+df.to_csv('output/csv/hasil_pembersihan_outlier.csv', index=False)
+
+# Isi nilai NaN menggunakan interpolasi linear
+print("* Mengisi nilai kosong (bekas outlier) dengan interpolasi linear.")
 df['Galon_Terjual_Cleaned'] = df['Galon_Terjual_Cleaned'].interpolate(method='linear')
-df['Galon_Terjual_Cleaned'].fillna(method='bfill', inplace=True)  
-df['Galon_Terjual_Cleaned'].fillna(method='ffill', inplace=True)  
 
-print("* Pembersihan data selesai.")
+# Gunakan backfill dan forward-fill untuk menangani NaN jika ada di awal/akhir data
+df['Galon_Terjual_Cleaned'].fillna(method='bfill', inplace=True)
+df['Galon_Terjual_Cleaned'].fillna(method='ffill', inplace=True)
+print("* Pembersihan data dengan metode interpolasi selesai.")
+
 
 print("\n--- TAHAP 3: REKAYASA FITUR ---")
 target_col = 'Galon_Terjual_Cleaned'
 df.set_index('tanggal', inplace=True)
 
+# Memastikan tidak ada tanggal yang hilang dalam rentang data
 df = df.reindex(pd.date_range(start=df.index.min(), end=df.index.max()), method=None)
 
-# Forward Fill Method
-# df['Galon_Terjual'].fillna(method='ffill', inplace=True)
-# df['Galon_Terjual_Cleaned'].fillna(method='ffill', inplace=True)
+# Isi gap pada data mentah dan data bersih setelah reindex
+df['Galon_Terjual'] = df['Galon_Terjual'].interpolate(method='linear').fillna(method='bfill').fillna(method='ffill')
+df['Galon_Terjual_Cleaned'] = df['Galon_Terjual_Cleaned'].interpolate(method='linear').fillna(method='bfill').fillna(method='ffill')
 
-# Interpolate Linier Method
-df['Galon_Terjual'] = df['Galon_Terjual'].interpolate(method='linear')
-df['Galon_Terjual'].fillna(method='bfill', inplace=True)
-df['Galon_Terjual'].fillna(method='ffill', inplace=True)
-
-df['Galon_Terjual_Cleaned'] = df['Galon_Terjual_Cleaned'].interpolate(method='linear')
-df['Galon_Terjual_Cleaned'].fillna(method='bfill', inplace=True)
-df['Galon_Terjual_Cleaned'].fillna(method='ffill', inplace=True)
-
-
-# =============================================================================
-# --- PERBAIKAN KESALAHAN LOGIKA FITUR ---
-# =============================================================================
-# 1. Buat fitur lag secara langsung dari kolom target (MENGHINDARI DOUBLE SHIFT)
 for lag in [1, 2, 3, 7, 14]:
     df[f'lag_{lag}'] = df[target_col].shift(lag)
 
-# 2. Buat target yang digeser HANYA untuk fitur rolling & diff (mencegah data leakage)
+# 2. Buat target yang digeser HANYA untuk fitur rolling & diff
 shifted_target = df[target_col].shift(1)
 
 # 3. Buat fitur rolling dan diff dari target yang sudah digeser
@@ -106,93 +112,82 @@ for window in [3, 7, 14, 21]:
 
 df['lag_diff_1'] = shifted_target.diff(1)
 df['lag_diff_7'] = shifted_target.diff(7)
-# =============================================================================
 # --- AKHIR PERBAIKAN ---
-# =============================================================================
 
+# Fitur berbasis kalender
 df['hari_dalam_bulan'] = df.index.day
 df['hari_dalam_tahun'] = df.index.dayofyear
 df['minggu_dalam_tahun'] = df.index.isocalendar().week.astype(int)
 df['bulan'] = df.index.month
-df['hari_minggu'] = df.index.dayofweek + 1
-df['is_weekend'] = (df['hari_minggu'] >= 6).astype(int)
+df['hari_dalam_seminggu'] = df.index.dayofweek + 1
+df['akhir_pekan'] = (df['hari_dalam_seminggu'] >= 6).astype(int)
 df['awal_bulan'] = df.index.is_month_start.astype(int)
 df['akhir_bulan'] = df.index.is_month_end.astype(int)
 
-spike_threshold = 49
-df['is_spike'] = (df[target_col] > spike_threshold).astype(int)
+# Fitur 'days since last spike'
+df['is_spike'] = (df[target_col] > SPIKE_FEATURE_THRESHOLD).astype(int)
+# Cek apakah fitur is_spike mengindikasikan kebocoran data dengan print
+print(df['is_spike'].value_counts())
+
+
+
+
 spike_days = df['is_spike'].copy()
 spike_days[spike_days == 0] = np.nan
 spike_days = spike_days.reset_index()
-spike_days.rename(columns={'index': 'tanggal'}, inplace=True)
 spike_days['day_num'] = range(len(spike_days))
-spike_days.set_index('tanggal', inplace=True)
+spike_days.set_index(spike_days.columns[0], inplace=True)
 spike_days['day_num'] = spike_days['day_num'] * spike_days['is_spike']
 spike_days['day_num'].fillna(method='ffill', inplace=True)
 df['days_since_last_spike'] = (range(len(df)) - spike_days['day_num']).fillna(0)
 
-
-low_threshold = 21
-df['is_low_sale'] = (df[target_col] < low_threshold).astype(int)
+# Fitur 'days since last low sale'
+df['is_low_sale'] = (df[target_col] < LOW_SALE_FEATURE_THRESHOLD).astype(int)
 low_sale_days = df['is_low_sale'].copy()
 low_sale_days[low_sale_days == 0] = np.nan
 low_sale_days = low_sale_days.reset_index()
-low_sale_days.rename(columns={'index': 'tanggal'}, inplace=True)
 low_sale_days['day_num'] = range(len(low_sale_days))
-low_sale_days.set_index('tanggal', inplace=True)
+low_sale_days.set_index(low_sale_days.columns[0], inplace=True)
 low_sale_days['day_num'] = low_sale_days['day_num'] * low_sale_days['is_low_sale']
 low_sale_days['day_num'].fillna(method='ffill', inplace=True)
 df['days_since_last_low'] = (range(len(df)) - low_sale_days['day_num']).fillna(0)
-
 
 df.reset_index(inplace=True)
 df.rename(columns={'index': 'tanggal'}, inplace=True)
 df.fillna(0, inplace=True)
 
-# Hasil dalam CSV
-df[['tanggal', 'Galon_Terjual_Cleaned', 'is_spike', 'days_since_last_spike']].to_csv('output/csv/spike_threshold.csv', index=False)
-df[['tanggal', 'Galon_Terjual_Cleaned', 'is_low_sale', 'days_since_last_low']].to_csv('output/csv/low_threshold.csv', index=False)
-
-
 features = [
-    'hari_minggu', 'is_weekend', 'awal_bulan', 'akhir_bulan',
+    'hari_dalam_seminggu', 'akhir_pekan', 'awal_bulan', 'akhir_bulan',
     'hari_dalam_bulan', 'minggu_dalam_tahun', 'bulan', 'hari_dalam_tahun',
     'lag_1', 'lag_2', 'lag_3', 'lag_7', 'lag_14',
     'rolling_mean_3', 'rolling_mean_7', 'rolling_mean_14', 'rolling_mean_21',
     'rolling_std_3', 'rolling_std_7', 'rolling_std_14', 'rolling_std_21',
     'lag_diff_1', 'lag_diff_7',
-    'days_since_last_spike',
+    'days_since_last_spike', 'is_spike', 'is_low_sale',
     'days_since_last_low'
 ]
 X = df[features]
 y = df[target_col]
 print("* Rekayasa fitur selesai.")
 
-# (Sisa skrip untuk splitting, training, dan saving tidak berubah)
-# ...
-# =============================================================================
-# TAHAP 4: PEMBAGIAN DATA (DATA SPLITTING)
-# =============================================================================
 print("\n--- TAHAP 4: PEMBAGIAN DATA ---")
 test_size = int(len(df) * TEST_SIZE_PERCENT)
 train_size = len(df) - test_size
 X_train, X_test = X.iloc[:train_size], X.iloc[train_size:]
 y_train, y_test = y.iloc[:train_size], y.iloc[train_size:]
 print(f"* Total data (setelah diisi): {len(df)} hari.")
+# Tampilkan total data dalam csv hanya menampilkan Hari, tanggal, galon terjual, dan galon terjual cleaned
+df = df[['tanggal', 'Galon_Terjual', 'Galon_Terjual_Cleaned']]
+df.to_csv('output/csv/hasil_rekayasa_fitur.csv', index=False)
 print(f"* Data Latih: {len(X_train)} hari (~{100*(1-TEST_SIZE_PERCENT):.0f}%)")
 print(f"* Data Uji  : {len(X_test)} hari (~{100*TEST_SIZE_PERCENT:.0f}%)")
 
-df.to_csv('output/csv/fitur_lengkap.csv', index=False)
 
-# =============================================================================
-# TAHAP 5: PEMODELAN (MODELING)
-# =============================================================================
 print("\n--- TAHAP 5: PEMODELAN ---")
 tscv = TimeSeriesSplit(n_splits=5)
-
 model = xgb.XGBRegressor(objective='reg:squarederror', random_state=42, n_jobs=-1)
 
-print("* Tahap 5.1: Pencarian Luas dengan RandomizedSearchCV...")
+print("* Mencari hyperparameter terbaik dengan RandomizedSearchCV dan GridSearchCV...")
 param_dist = {
     'n_estimators': [200, 400, 600, 800], 'max_depth': [3, 4, 5, 6],
     'learning_rate': [0.01, 0.05, 0.1], 'subsample': [0.7, 0.8, 0.9],
@@ -201,9 +196,7 @@ param_dist = {
 }
 random_search = RandomizedSearchCV(estimator=model, param_distributions=param_dist, n_iter=50, cv=tscv, scoring='neg_mean_absolute_error', verbose=1, random_state=42, n_jobs=-1)
 random_search.fit(X_train, y_train)
-print(f"\n* Parameter terbaik sementara: {random_search.best_params_}")
 
-print("\n* Tahap 5.2: Pencarian Halus dengan GridSearchCV...")
 best_params_from_random = random_search.best_params_
 param_grid = {
     'n_estimators': [best_params_from_random['n_estimators']], 'max_depth': [best_params_from_random['max_depth']],
@@ -215,17 +208,13 @@ grid_search = GridSearchCV(estimator=model, param_grid=param_grid, cv=tscv, scor
 grid_search.fit(X_train, y_train)
 best_model = grid_search.best_estimator_
 print(f"\n* Parameter terbaik final ditemukan: {grid_search.best_params_}")
-
-
 print("* Pelatihan model selesai.")
 
 
-# =============================================================================
-# TAHAP 6: EVALUASI (EVALUATION)
-# =============================================================================
 print("\n--- TAHAP 6: EVALUASI KINERJA MODEL ---")
 y_pred = best_model.predict(X_test)
-y_pred = y_pred.clip(min=lower_bound, max=upper_bound)
+# Opsi: Kliping pada prediksi akhir sebagai "safety net" agar tidak ada prediksi ekstrem
+y_pred = y_pred.clip(min=LOWER_OUTLIER_THRESHOLD)
 
 mape = np.mean(np.abs((y_test - y_pred) / y_test.replace(0, np.nan).dropna())) * 100
 mae = mean_absolute_error(y_test, y_pred)
@@ -237,9 +226,6 @@ print(f"Mean Absolute Percentage Error (MAPE): {mape:.2f}%")
 print(f"Root Mean Squared Error (RMSE)    : {rmse:.2f}")
 
 
-# =============================================================================
-# TAHAP 7: PENYIMPANAN (DEPLOYMENT)
-# =============================================================================
 print("\n--- TAHAP 7: PENYIMPANAN MODEL & METADATA ---")
 joblib.dump(best_model, 'xgboost_gallon_model.joblib')
 print("* Model berhasil disimpan sebagai 'xgboost_gallon_model.joblib'")
@@ -247,7 +233,11 @@ print("* Model berhasil disimpan sebagai 'xgboost_gallon_model.joblib'")
 cleaned_best_params = {k: (int(v) if isinstance(v, np.integer) else float(v) if isinstance(v, np.floating) else v) for k, v in grid_search.best_params_.items()}
 model_metadata = {
     'features_used': features,
-    'business_rules': {'lower_bound': lower_bound, 'upper_bound': upper_bound},
+    'business_rules': {
+        'lower_outlier_threshold': LOWER_OUTLIER_THRESHOLD,
+        'upper_outlier_threshold': UPPER_OUTLIER_THRESHOLD,
+        'imputation_method': 'linear_interpolation'
+    },
     'model_performance_on_test_set': {'mae': float(mae), 'rmse': float(rmse), 'mape': float(mape)},
     'best_hyperparameters': cleaned_best_params
 }
@@ -255,33 +245,26 @@ with open('model_metadata.json', 'w') as f:
     json.dump(model_metadata, f, indent=4)
 print("* Metadata model berhasil disimpan sebagai 'model_metadata.json'")
 
-# Visualisasi hasil data uji dalam bentuk png
+# Visualisasi hasil
 plt.figure(figsize=(18, 9))
-plt.plot(df.loc[y_test.index, 'tanggal'], y_test, label='Data Uji (Aktual)', color='green', marker='o')
+plt.plot(df.loc[y_test.index, 'tanggal'], y_test, label='Data Uji (Aktual)', color='green', marker='o', markersize=4)
 plt.plot(df.loc[y_test.index, 'tanggal'], y_pred, label='Prediksi Model', color='darkorange', linestyle='--')
-plt.title('Perbandingan Data Uji dan Prediksi', fontsize=16)
+plt.title('Perbandingan Data Uji dan Prediksi (Metode Interpolasi)', fontsize=16)
 plt.xlabel('Tanggal', fontsize=12)
 plt.ylabel('Jumlah Galon Terjual', fontsize=12)
 plt.legend()
 plt.grid(True, which='both', linestyle='--', linewidth=0.5)
 plt.tight_layout()
-plt.savefig("output/images/actual_vs_prediction.png")
+plt.savefig("output/images/actual_vs_prediction_interpolated.png")
 plt.close()
+print("* Visualisasi perbandingan aktual vs prediksi disimpan.")
 
-# Hasil data uji dalam file .csv
-y_test_df = pd.DataFrame({'tanggal': df.loc[y_test.index, 'tanggal'], 'Galon_Terjual_Actual': y_test, 'Galon_Terjual_Predicted': y_pred})
-y_test_df.to_csv('output/csv/hasil_data_uji.csv', index=False)
-
-# Fitur importance dalam bentuk png dengan nilainya
-plt.figure(figsize=(12, 8))
-xgb.plot_importance(best_model, importance_type='weight', max_num_features=20, title='Fitur Penting Model', xlabel='Jumlah Penggunaan Fitur')
+# Visualisasi fitur penting
+plt.figure(figsize=(12, 10))
+xgb.plot_importance(best_model, importance_type='weight', max_num_features=20, title='Fitur Penting Model')
 plt.tight_layout()
 plt.savefig("output/images/feature_importance.png")
 plt.close()
+print("* Visualisasi fitur penting disimpan.")
 
-# Fitur importance dalam bentuk csv
-importance_df = pd.DataFrame({
-    'feature': features,
-    'importance': best_model.feature_importances_
-}).sort_values(by='importance', ascending=False)
-importance_df.to_csv('output/images/fitur_importance.csv', index=False)
+print("\n--- Proses Selesai ---")

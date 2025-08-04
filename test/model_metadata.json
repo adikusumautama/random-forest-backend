@@ -1,7 +1,7 @@
 {
     "features_used": [
-        "hari_minggu",
-        "is_weekend",
+        "hari_dalam_seminggu",
+        "akhir_pekan",
         "awal_bulan",
         "akhir_bulan",
         "hari_dalam_bulan",
@@ -24,24 +24,27 @@
         "lag_diff_1",
         "lag_diff_7",
         "days_since_last_spike",
+        "is_spike",
+        "is_low_sale",
         "days_since_last_low"
     ],
     "business_rules": {
-        "lower_bound": 20.0,
-        "upper_bound": 53.0
+        "lower_outlier_threshold": 19,
+        "upper_outlier_threshold": 52,
+        "imputation_method": "linear_interpolation"
     },
     "model_performance_on_test_set": {
-        "mae": 3.366631307572033,
-        "rmse": 4.977132114937775,
-        "mape": 10.423603707541806
+        "mae": 3.0900917255507343,
+        "rmse": 4.489752919672579,
+        "mape": 9.290794271981193
     },
     "best_hyperparameters": {
-        "colsample_bytree": 0.9,
-        "gamma": 0.2,
-        "learning_rate": 0.015,
-        "max_depth": 6,
-        "n_estimators": 800,
-        "reg_alpha": 0.2,
-        "subsample": 0.7
+        "colsample_bytree": 0.7,
+        "gamma": 0.1,
+        "learning_rate": 0.01,
+        "max_depth": 3,
+        "n_estimators": 400,
+        "reg_alpha": 0.1,
+        "subsample": 0.9
     }
 }

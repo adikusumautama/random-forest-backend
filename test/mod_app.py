@@ -1,6 +1,6 @@
 # =============================================================================
 # PROYEK PREDIKSI PENJUALAN GALON - BACKEND API
-# Script: mod_app.py (Versi Final dengan Logika Prediksi yang Benar)
+# Script: mod_app.py (Versi Disesuaikan dengan Interpolasi Outlier)
 # Deskripsi: Flask API yang efisien untuk prediksi, menggunakan logika
 #            rekayasa fitur yang 100% konsisten dengan skrip training.
 # =============================================================================
@@ -39,12 +39,15 @@ try:
     
     FEATURES = metadata["features_used"]
     BUSINESS_RULES = metadata["business_rules"]
-    LOWER_BOUND = BUSINESS_RULES['lower_bound']
-    UPPER_BOUND = BUSINESS_RULES['upper_bound']
+    # Mengambil threshold dari metadata yang baru
+    LOWER_OUTLIER_THRESHOLD = BUSINESS_RULES['lower_outlier_threshold']
+    UPPER_OUTLIER_THRESHOLD = BUSINESS_RULES['upper_outlier_threshold']
+    LOW_SALE_FEATURE_THRESHOLD = 21 # Sesuai training script
+    SPIKE_FEATURE_THRESHOLD = 49  # Sesuai training script
     
     print(f"* Model '{MODEL_PATH}' dan metadata berhasil dimuat.")
 except Exception as e:
-    model, FEATURES, BUSINESS_RULES, LOWER_BOUND, UPPER_BOUND = None, [], {}, 0, 0
+    model, FEATURES, BUSINESS_RULES, LOWER_OUTLIER_THRESHOLD, UPPER_OUTLIER_THRESHOLD = None, [], {}, 0, 0
     print(f"* Gagal memuat model atau metadata: {e}")
 
 def get_sales_history_from_firestore(days_of_context=60):
@@ -98,17 +101,26 @@ def build_features_for_prediction(historical_df, target_date):
 
     df = historical_df.copy()
 
+    # Pastikan rentang tanggal lengkap hingga tanggal target
     full_date_range = pd.date_range(start=df.index.min(), end=target_date)
     df = df.reindex(full_date_range)
     
-    df['Galon_Terjual_Cleaned'] = df['Galon_Terjual'].clip(lower=LOWER_BOUND, upper=UPPER_BOUND)
+    # --- LOGIKA BARU: Hapus outlier dan interpolasi (SAMA SEPERTI TRAINING) ---
+    df['Galon_Terjual_Cleaned'] = df['Galon_Terjual'].copy().astype(float)
+    df.loc[df['Galon_Terjual'] > UPPER_OUTLIER_THRESHOLD, 'Galon_Terjual_Cleaned'] = np.nan
+    df.loc[df['Galon_Terjual'] < LOWER_OUTLIER_THRESHOLD, 'Galon_Terjual_Cleaned'] = np.nan
+    
+    # Isi nilai NaN menggunakan interpolasi linear
+    df['Galon_Terjual_Cleaned'] = df['Galon_Terjual_Cleaned'].interpolate(method='linear')
 
-    df['Galon_Terjual_Cleaned'].fillna(method='ffill', inplace=True)
-
+    # Gunakan backfill dan forward-fill untuk menangani NaN jika ada di awal/akhir data
     df['Galon_Terjual_Cleaned'].fillna(method='bfill', inplace=True)
+    df['Galon_Terjual_Cleaned'].fillna(method='ffill', inplace=True)
+    # --- AKHIR LOGIKA BARU ---
 
     target_col = 'Galon_Terjual_Cleaned'
 
+    # --- REKAYASA FITUR (SAMA PERSIS DENGAN TRAINING) ---
     for lag in [1, 2, 3, 7, 14]:
         df[f'lag_{lag}'] = df[target_col].shift(lag)
 
@@ -121,19 +133,18 @@ def build_features_for_prediction(historical_df, target_date):
     df['lag_diff_1'] = shifted_target.diff(1)
     df['lag_diff_7'] = shifted_target.diff(7)
 
-    # --- Fitur Berbasis Tanggal (Tidak berubah) ---
+    # Fitur berbasis kalender
     df['hari_dalam_bulan'] = df.index.day
     df['hari_dalam_tahun'] = df.index.dayofyear
     df['minggu_dalam_tahun'] = df.index.isocalendar().week.astype(int)
     df['bulan'] = df.index.month
-    df['hari_minggu'] = df.index.dayofweek + 1
-    df['is_weekend'] = (df['hari_minggu'] >= 6).astype(int)
+    df['hari_dalam_seminggu'] = df.index.dayofweek + 1
+    df['akhir_pekan'] = (df['hari_dalam_seminggu'] >= 6).astype(int)
     df['awal_bulan'] = df.index.is_month_start.astype(int)
     df['akhir_bulan'] = df.index.is_month_end.astype(int)
 
-    # --- Fitur Spike/Low (Tidak berubah) ---
-    spike_threshold = 49
-    df['is_spike'] = (df[target_col] > spike_threshold).astype(int)
+    # Fitur 'days since last spike'
+    df['is_spike'] = (df[target_col] > SPIKE_FEATURE_THRESHOLD).astype(int)
     spike_days = df['is_spike'].copy()
     spike_days[spike_days == 0] = np.nan
     spike_days = spike_days.reset_index(name='is_spike').rename(columns={'index': 'tanggal'})
@@ -143,8 +154,8 @@ def build_features_for_prediction(historical_df, target_date):
     spike_days['day_num'].fillna(method='ffill', inplace=True)
     df['days_since_last_spike'] = (range(len(df)) - spike_days['day_num']).fillna(0)
 
-    low_threshold = 21
-    df['is_low_sale'] = (df[target_col] < low_threshold).astype(int)
+    # Fitur 'days since last low sale'
+    df['is_low_sale'] = (df[target_col] < LOW_SALE_FEATURE_THRESHOLD).astype(int)
     low_sale_days = df['is_low_sale'].copy()
     low_sale_days[low_sale_days == 0] = np.nan
     low_sale_days = low_sale_days.reset_index(name='is_low_sale').rename(columns={'index': 'tanggal'})
@@ -156,6 +167,7 @@ def build_features_for_prediction(historical_df, target_date):
 
     df.fillna(0, inplace=True)
     
+    # Mengambil baris terakhir yang berisi fitur untuk tanggal target
     return df.tail(1)[FEATURES]
 
 
@@ -176,8 +188,9 @@ def predict():
         feature_df = build_features_for_prediction(df_hist_context, target_date)
         
         raw_pred = model.predict(feature_df)[0]
-            
-        final_pred = round(float(raw_pred))
+        
+        # Opsi: Kliping pada prediksi akhir sebagai "safety net"
+        final_pred = round(float(raw_pred.clip(min=LOWER_OUTLIER_THRESHOLD)))
         
         print("\nFitur Input Model:")
         if not feature_df.empty:
@@ -186,7 +199,7 @@ def predict():
         print("\n==============================")
         print(f"Prediksi Tanggal: {target_date.strftime('%A, %d %B %Y')}")
         print(f"\nPrediksi Mentah dari Model: {raw_pred:.2f}")
-        print(f"Prediksi Akhir (setelah pembulatan): {final_pred:.2f} galon")
+        print(f"Prediksi Akhir (setelah pembulatan & kliping): {final_pred} galon")
         print("==============================")
                
         return jsonify({
