@@ -1,8 +1,3 @@
-# =============================================================================
-# PROYEK PREDIKSI PENJUALAN GALON
-# Script: mod_train_model.py (Versi Disesuaikan dengan Interpolasi Outlier)
-# =============================================================================
-
 import pandas as pd
 import numpy as np
 import xgboost as xgb
@@ -17,18 +12,17 @@ import warnings
 warnings.filterwarnings('ignore')
 sns.set_theme(style="whitegrid")
 
-# --- KONFIGURASI ---
 TEST_SIZE_PERCENT = 0.40
 START_DATE_TRAIN = '2022-07-04'
 # Batas untuk mendefinisikan outlier
 LOWER_OUTLIER_THRESHOLD = 19
-UPPER_OUTLIER_THRESHOLD = 52
+UPPER_OUTLIER_THRESHOLD = 51
 # Batas untuk fitur 'is_low_sale' dan 'is_spike'
 LOW_SALE_FEATURE_THRESHOLD = 21
-SPIKE_FEATURE_THRESHOLD = 49
+SPIKE_FEATURE_THRESHOLD = 40
 
 
-print("--- TAHAP 1: PERSIAPAN DATA ---")
+print("PERSIAPAN DATA")
 try:
     df_raw = pd.read_csv('galon.csv', header=0, names=['Hari_dalam_seminggu_Raw', 'Galon_Terjual'])
     print("* Berhasil memuat data mentah dari 'galon.csv'.")
@@ -58,61 +52,55 @@ for i in range(1, len(df_raw)):
 
 df = pd.DataFrame({'tanggal': dates, 'Galon_Terjual': df_raw['Galon_Terjual'].values})
 df.to_csv('hasil_pemetaan.csv', index=False)
-print("* Pemetaan tanggal ke hari selesai.")
+print('Menambahkan hasil pemetaan tanggal\n')
 
 
-print("\n--- TAHAP 2: PEMBERSIHAN DATA (METODE BARU) ---")
-# --- LOGIKA BARU: Hapus outlier dan interpolasi ---
-print("* Mengganti outlier dengan NaN untuk diinterpolasi.")
-# Salin kolom asli untuk dimodifikasi
+
+# Pembersihan Data
+print('TAHAP PEMBERSIHAN DATA')
+print("1. Mengganti outlier dengan NaN untuk diinterpolasi.\n")
 df['Galon_Terjual_Cleaned'] = df['Galon_Terjual'].copy().astype(float)
-
-# Ubah nilai di atas UPPER_OUTLIER_THRESHOLD menjadi NaN
 df.loc[df['Galon_Terjual'] > UPPER_OUTLIER_THRESHOLD, 'Galon_Terjual_Cleaned'] = np.nan
-# Ubah nilai di bawah LOWER_OUTLIER_THRESHOLD menjadi NaN
 df.loc[df['Galon_Terjual'] < LOWER_OUTLIER_THRESHOLD, 'Galon_Terjual_Cleaned'] = np.nan
 
 # Hitung jumlah outlier yang dihapus
 outliers_removed = df['Galon_Terjual_Cleaned'].isna().sum()
-print(f"* Ditemukan dan ditandai {outliers_removed} outlier untuk diinterpolasi.")
-# Tampilkan hasil jumlah outlier yang dihapus dalam csv
-df.to_csv('output/csv/hasil_pembersihan_outlier.csv', index=False)
+print(f"Ditemukan dan ditandai {outliers_removed} outlier.\n")
+df.to_csv('output/csv/hasil_penghapusan.csv', index=False)
+print("Hasil disimpan disimpan dalam file 'hasil_penghapusan.csv'\n")
 
 # Isi nilai NaN menggunakan interpolasi linear
-print("* Mengisi nilai kosong (bekas outlier) dengan interpolasi linear.")
+print("\n2. Mengisi nilai kosong dengan interpolasi linear.")
 df['Galon_Terjual_Cleaned'] = df['Galon_Terjual_Cleaned'].interpolate(method='linear')
-
-# Gunakan backfill dan forward-fill untuk menangani NaN jika ada di awal/akhir data
 df['Galon_Terjual_Cleaned'].fillna(method='bfill', inplace=True)
 df['Galon_Terjual_Cleaned'].fillna(method='ffill', inplace=True)
-print("* Pembersihan data dengan metode interpolasi selesai.")
 
 
-print("\n--- TAHAP 3: REKAYASA FITUR ---")
+print("TAHAP REKAYASA FITUR\n")
 target_col = 'Galon_Terjual_Cleaned'
 df.set_index('tanggal', inplace=True)
 
 # Memastikan tidak ada tanggal yang hilang dalam rentang data
+print("\n1. Reindex Tanggal")
 df = df.reindex(pd.date_range(start=df.index.min(), end=df.index.max()), method=None)
-
 # Isi gap pada data mentah dan data bersih setelah reindex
+print("")
 df['Galon_Terjual'] = df['Galon_Terjual'].interpolate(method='linear').fillna(method='bfill').fillna(method='ffill')
 df['Galon_Terjual_Cleaned'] = df['Galon_Terjual_Cleaned'].interpolate(method='linear').fillna(method='bfill').fillna(method='ffill')
 
+# Fitur Lag
 for lag in [1, 2, 3, 7, 14]:
     df[f'lag_{lag}'] = df[target_col].shift(lag)
 
-# 2. Buat target yang digeser HANYA untuk fitur rolling & diff
+# 
 shifted_target = df[target_col].shift(1)
-
-# 3. Buat fitur rolling dan diff dari target yang sudah digeser
 for window in [3, 7, 14, 21]:
+    # Rolling
     df[f'rolling_mean_{window}'] = shifted_target.rolling(window=window).mean()
     df[f'rolling_std_{window}'] = shifted_target.rolling(window=window).std()
-
+# Lag Differences
 df['lag_diff_1'] = shifted_target.diff(1)
 df['lag_diff_7'] = shifted_target.diff(7)
-# --- AKHIR PERBAIKAN ---
 
 # Fitur berbasis kalender
 df['hari_dalam_bulan'] = df.index.day
@@ -126,12 +114,6 @@ df['akhir_bulan'] = df.index.is_month_end.astype(int)
 
 # Fitur 'days since last spike'
 df['is_spike'] = (df[target_col] > SPIKE_FEATURE_THRESHOLD).astype(int)
-# Cek apakah fitur is_spike mengindikasikan kebocoran data dengan print
-print(df['is_spike'].value_counts())
-
-
-
-
 spike_days = df['is_spike'].copy()
 spike_days[spike_days == 0] = np.nan
 spike_days = spike_days.reset_index()
@@ -207,7 +189,7 @@ param_grid = {
 grid_search = GridSearchCV(estimator=model, param_grid=param_grid, cv=tscv, scoring='neg_mean_absolute_error', n_jobs=-1, verbose=1)
 grid_search.fit(X_train, y_train)
 best_model = grid_search.best_estimator_
-print(f"\n* Parameter terbaik final ditemukan: {grid_search.best_params_}")
+print(f"\nParameter terbaik final ditemukan: {grid_search.best_params_}")
 print("* Pelatihan model selesai.")
 
 
@@ -268,3 +250,13 @@ plt.close()
 print("* Visualisasi fitur penting disimpan.")
 
 print("\n--- Proses Selesai ---")
+
+# Tampilkan Hasil Prediksi Pada Data Uji dalam csv
+df_pred = pd.DataFrame({
+    # tanggal hasil prediksi
+    'tanggal': df.loc[y_test.index, 'tanggal'],
+    'prediksi': y_pred,
+    'aktual': y_test
+})
+df_pred.to_csv("output/csv/hasil_prediksi.csv", index=False)
+print("* Hasil prediksi disimpan dalam 'hasil_prediksi.csv'")

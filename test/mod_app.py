@@ -5,7 +5,7 @@
 #            rekayasa fitur yang 100% konsisten dengan skrip training.
 # =============================================================================
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 import joblib, json, pandas as pd, numpy as np
 from datetime import datetime, timedelta
 import firebase_admin
@@ -28,7 +28,7 @@ except Exception as e:
     db = None
     print(f"* Gagal koneksi Firebase: {e}")
 
-# --- Memuat Model & Metadata ---
+# Memuat model dan metadata
 try:
     MODEL_PATH = "xgboost_gallon_model.joblib"
     METADATA_PATH = "model_metadata.json"
@@ -42,15 +42,15 @@ try:
     # Mengambil threshold dari metadata yang baru
     LOWER_OUTLIER_THRESHOLD = BUSINESS_RULES['lower_outlier_threshold']
     UPPER_OUTLIER_THRESHOLD = BUSINESS_RULES['upper_outlier_threshold']
-    LOW_SALE_FEATURE_THRESHOLD = 21 # Sesuai training script
-    SPIKE_FEATURE_THRESHOLD = 49  # Sesuai training script
+    LOW_SALE_FEATURE_THRESHOLD = 21
+    SPIKE_FEATURE_THRESHOLD = 49
     
     print(f"* Model '{MODEL_PATH}' dan metadata berhasil dimuat.")
 except Exception as e:
     model, FEATURES, BUSINESS_RULES, LOWER_OUTLIER_THRESHOLD, UPPER_OUTLIER_THRESHOLD = None, [], {}, 0, 0
     print(f"* Gagal memuat model atau metadata: {e}")
 
-def get_sales_history_from_firestore(days_of_context=60):
+def get_sales_history_from_firestore(days_of_context=30):
     """
     Mengambil data historis dari Firestore secara efisien dan TERURUT.
     """
@@ -89,9 +89,7 @@ def get_sales_history_from_firestore(days_of_context=60):
         return pd.DataFrame(columns=["tanggal", "Galon_Terjual"]).set_index('tanggal')
         
     df = pd.DataFrame(sales_data).sort_values(by="tanggal").set_index('tanggal')
-
     df.index = df.index.normalize()
-    
     return df
 
 def build_features_for_prediction(historical_df, target_date):
@@ -105,7 +103,6 @@ def build_features_for_prediction(historical_df, target_date):
     full_date_range = pd.date_range(start=df.index.min(), end=target_date)
     df = df.reindex(full_date_range)
     
-    # --- LOGIKA BARU: Hapus outlier dan interpolasi (SAMA SEPERTI TRAINING) ---
     df['Galon_Terjual_Cleaned'] = df['Galon_Terjual'].copy().astype(float)
     df.loc[df['Galon_Terjual'] > UPPER_OUTLIER_THRESHOLD, 'Galon_Terjual_Cleaned'] = np.nan
     df.loc[df['Galon_Terjual'] < LOWER_OUTLIER_THRESHOLD, 'Galon_Terjual_Cleaned'] = np.nan
@@ -116,20 +113,18 @@ def build_features_for_prediction(historical_df, target_date):
     # Gunakan backfill dan forward-fill untuk menangani NaN jika ada di awal/akhir data
     df['Galon_Terjual_Cleaned'].fillna(method='bfill', inplace=True)
     df['Galon_Terjual_Cleaned'].fillna(method='ffill', inplace=True)
-    # --- AKHIR LOGIKA BARU ---
 
     target_col = 'Galon_Terjual_Cleaned'
-
-    # --- REKAYASA FITUR (SAMA PERSIS DENGAN TRAINING) ---
     for lag in [1, 2, 3, 7, 14]:
         df[f'lag_{lag}'] = df[target_col].shift(lag)
 
     shifted_target = df[target_col].shift(1)
-
     for window in [3, 7, 14, 21]:
+        # Rolling
         df[f'rolling_mean_{window}'] = shifted_target.rolling(window=window).mean()
         df[f'rolling_std_{window}'] = shifted_target.rolling(window=window).std()
-
+    
+    # Fitur Lag
     df['lag_diff_1'] = shifted_target.diff(1)
     df['lag_diff_7'] = shifted_target.diff(7)
 
@@ -167,8 +162,13 @@ def build_features_for_prediction(historical_df, target_date):
 
     df.fillna(0, inplace=True)
     
-    # Mengambil baris terakhir yang berisi fitur untuk tanggal target
     return df.tail(1)[FEATURES]
+
+# Cek ukuran request (buat lihat seberapa besar data yang dikirim)
+@app.before_request
+def log_request_info():
+    print(f"Request size: {request.content_length} bytes")
+
 
 
 @app.route("/predict", methods=["POST"])
@@ -183,13 +183,11 @@ def predict():
         
         last_date = df_hist_context.index.max()
         target_date = last_date + timedelta(days=1)
-
         
         feature_df = build_features_for_prediction(df_hist_context, target_date)
         
         raw_pred = model.predict(feature_df)[0]
         
-        # Opsi: Kliping pada prediksi akhir sebagai "safety net"
         final_pred = round(float(raw_pred.clip(min=LOWER_OUTLIER_THRESHOLD)))
         
         print("\nFitur Input Model:")
@@ -200,8 +198,14 @@ def predict():
         print(f"Prediksi Tanggal: {target_date.strftime('%A, %d %B %Y')}")
         print(f"\nPrediksi Mentah dari Model: {raw_pred:.2f}")
         print(f"Prediksi Akhir (setelah pembulatan & kliping): {final_pred} galon")
-        print("==============================")
-               
+        
+                
+        # Perlihatkan nilai kosong yang terisi
+        print("\nNilai kosong yang terisi:")
+        for col in feature_df.columns:
+            if feature_df[col].isnull().any():
+                print(f"  - {col:25s}: {feature_df[col].isnull().sum()} nilai kosong terisi")
+        
         return jsonify({
             "last_known_data_date": last_date.strftime("%Y-%m-%d"),
             "prediction_for_next_day": {

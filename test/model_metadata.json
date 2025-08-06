@@ -30,21 +30,21 @@
     ],
     "business_rules": {
         "lower_outlier_threshold": 19,
-        "upper_outlier_threshold": 52,
+        "upper_outlier_threshold": 51,
         "imputation_method": "linear_interpolation"
     },
     "model_performance_on_test_set": {
-        "mae": 3.0900917255507343,
-        "rmse": 4.489752919672579,
-        "mape": 9.290794271981193
+        "mae": 2.3093963602129346,
+        "rmse": 3.245744732692556,
+        "mape": 7.004201493537556
     },
     "best_hyperparameters": {
-        "colsample_bytree": 0.7,
-        "gamma": 0.1,
+        "colsample_bytree": 0.8,
+        "gamma": 0.3,
         "learning_rate": 0.01,
-        "max_depth": 3,
+        "max_depth": 6,
         "n_estimators": 400,
-        "reg_alpha": 0.1,
-        "subsample": 0.9
+        "reg_alpha": 0.2,
+        "subsample": 0.8
     }
 }
